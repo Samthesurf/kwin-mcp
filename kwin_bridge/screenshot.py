@@ -47,15 +47,6 @@ def _run(args, timeout: float = 20.0) -> None:
     proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
                           env=base_env(), stdin=subprocess.DEVNULL)
     if proc.returncode != 0:
-        try:
-            with open("/tmp/kwin_sp_err.log", "a") as fh:
-                fh.write(f"ARGS: {' '.join(args)}\nRC: {proc.returncode}\n"
-                         f"STDOUT: {proc.stdout!r}\nSTDERR: {proc.stderr!r}\n"
-                         f"PID ENV DBUS={os.environ.get('DBUS_SESSION_BUS_ADDRESS')}\n"
-                         f"PID ENV WAYLAND={os.environ.get('WAYLAND_DISPLAY')}\n"
-                         f"PID ENV DISPLAY={os.environ.get('DISPLAY')}\n---\n")
-        except Exception:
-            pass
         raise RuntimeError(
             f"screenshot command failed: {' '.join(args)}\n"
             f"{proc.stdout}\n{proc.stderr}"
