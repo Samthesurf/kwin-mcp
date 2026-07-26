@@ -52,6 +52,7 @@ def _run(args, timeout: float = 15.0) -> str:
             text=True,
             timeout=timeout,
             env=base_env(),
+            stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError as exc:
         raise RuntimeError(f"required binary not found: {args[0]}") from exc

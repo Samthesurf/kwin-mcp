@@ -45,7 +45,7 @@ _MAX_RETRIES = 4
 
 def _run(args, timeout: float = 20.0) -> None:
     proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                          env=base_env())
+                          env=base_env(), stdin=subprocess.DEVNULL)
     if proc.returncode != 0:
         raise RuntimeError(
             f"screenshot command failed: {' '.join(args)}\n"

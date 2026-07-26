@@ -259,7 +259,7 @@ def _mouse_location() -> str:
     proc = subprocess.run(
         ["kdotool", "getmouselocation", "--shell"],
         capture_output=True, text=True, timeout=10,
-        env=base_env(),
+        env=base_env(), stdin=subprocess.DEVNULL,
     )
     return proc.stdout
 
