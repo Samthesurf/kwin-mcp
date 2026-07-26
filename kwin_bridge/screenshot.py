@@ -40,7 +40,7 @@ _CAPTURE_TIMEOUT = 10.0
 # the capture reliable.
 _PRE_DELAY = 0.5
 _POST_DELAY = 0.4
-_MAX_RETRIES = 3
+_MAX_RETRIES = 4
 
 
 def _run(args, timeout: float = 20.0) -> None:
@@ -89,7 +89,13 @@ def _looks_like_real_frame(path: str) -> bool:
 
 
 def _capture_with_retry(build_args, output_path: str, window_id: str = "") -> str:
-    """Invoke spectacle with settle delay + validation retry."""
+    """Invoke spectacle with settle delay + validation retry.
+
+    spectacle can occasionally return a non-zero exit while still having
+    written the PNG (especially on its first launch in a fresh session). We
+    therefore treat a non-zero exit as soft: if the file appeared, we proceed
+    to validation; only if the file is truly missing do we retry.
+    """
     last_err = None
     for attempt in range(_MAX_RETRIES):
         time.sleep(_PRE_DELAY)
@@ -99,8 +105,12 @@ def _capture_with_retry(build_args, output_path: str, window_id: str = "") -> st
             last_err = exc
             continue
         except RuntimeError as exc:
-            last_err = exc
-            continue
+            # Soft failure: if the PNG still landed, keep it.
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                last_err = None
+            else:
+                last_err = exc
+                continue
         _wait_for_file(output_path)
         time.sleep(_POST_DELAY)
         if _looks_like_real_frame(output_path):
