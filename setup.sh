@@ -23,9 +23,6 @@
 set -euo pipefail
 
 REPO="git+https://github.com/Samthesurf/kwin-mcp"
-SERVER_ENTRY="uvx"
-SERVER_ARGS=(--from "$REPO" kwin-mcp)
-
 PYBIN="$(command -v python3 || command -v python)"
 [ -n "$PYBIN" ] || { echo "python3 not found"; exit 1; }
 
@@ -49,64 +46,55 @@ case "$action" in
   hermes)
     CONF="$HOME/.hermes/config.yaml"
     [ -f "$CONF" ] || { echo "Hermes config not found at $CONF"; exit 1; }
-    # Inject the mcp_servers.kwin-mcp block if absent (idempotent).
     if grep -q "kwin-mcp:" "$CONF"; then
       echo "kwin-mcp already present in $CONF (skipping)."
     else
-      # Insert before the 'platform_toolsets:' line if present, else append.
-      BLOCK=$(cat <<'EOF'
-  kwin-mcp:
-    command: uvx
-    args:
-      - --from
-      - git+https://github.com/Samthesurf/kwin-mcp
-      - kwin-mcp
-    env:
-      DBUS_SESSION_BUS_ADDRESS: ${DBUS_SESSION_BUS_ADDRESS}
-      DISPLAY: ${DISPLAY}
-      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY}
-      XDG_SESSION_TYPE: ${XDG_SESSION_TYPE}
-    enabled: true
-
-EOF
-)
-      if grep -q "^platform_toolsets:" "$CONF"; then
-        # Insert the block right before platform_toolsets, under mcp_servers.
-        python3 - "$CONF" <<PY
-import sys, re
+      export KWIN_REPO="$REPO"
+      python3 - "$CONF" <<'PY'
+import sys, io
 p = sys.argv[1]
+repo = __import__("os").environ["KWIN_REPO"]
 s = open(p).read()
-block = r'''  kwin-mcp:
-    command: uvx
-    args:
-      - --from
-      - git+https://github.com/Samthesurf/kwin-mcp
-      - kwin-mcp
-    env:
-      DBUS_SESSION_BUS_ADDRESS: \${DBUS_SESSION_BUS_ADDRESS}
-      DISPLAY: \${DISPLAY}
-      WAYLAND_DISPLAY: \${WAYLAND_DISPLAY}
-      XDG_SESSION_TYPE: \${XDG_SESSION_TYPE}
-    enabled: true
-
-'''
-        s = s.replace("platform_toolsets:", block + "platform_toolsets:", 1)
-        open(p, "w").write(s)
-        print("Wired kwin-mcp into", p)
+block = (
+    "  kwin-mcp:\n"
+    "    command: uvx\n"
+    "    args:\n"
+    "      - --from\n"
+    "      - " + repo + "\n"
+    "      - kwin-mcp\n"
+    "    env:\n"
+    "      DBUS_SESSION_BUS_ADDRESS: ${DBUS_SESSION_BUS_ADDRESS}\n"
+    "      DISPLAY: ${DISPLAY}\n"
+    "      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY}\n"
+    "      XDG_SESSION_TYPE: ${XDG_SESSION_TYPE}\n"
+    "    enabled: true\n"
+    "\n"
+)
+# Insert the server block right before the first top-level 'platform_toolsets:'
+# line so it ends up inside the mcp_servers mapping.
+lines = s.splitlines(keepends=True)
+out = []
+inserted = False
+for line in lines:
+    if not inserted and line.startswith("platform_toolsets:"):
+        out.append(block)
+        inserted = True
+    out.append(line)
+if not inserted:
+    out.append("\n" + block)
+open(p, "w").write("".join(out))
+print("Wired kwin-mcp into", p)
 PY
-      else
-        printf "%s" "$BLOCK" >> "$CONF"
-        echo "Appended kwin-mcp to $CONF"
-      fi
+      echo "Done. Restart/refresh Hermes to load kwin-mcp."
     fi
-    echo "Done. Restart/refresh Hermes to load kwin-mcp."
     ;;
-
   claude)
     CONF="$HOME/.claude.json"
-    python3 - "$CONF" "$REPO" <<'PY'
-import sys, json
-p, repo = sys.argv[1], sys.argv[2]
+    export KWIN_REPO="$REPO"
+    python3 - "$CONF" <<'PY'
+import sys, json, os
+p = sys.argv[1]
+repo = os.environ["KWIN_REPO"]
 d = json.load(open(p))
 d.setdefault("mcpServers", {})["kwin-mcp"] = {
     "command": "uvx",
@@ -117,28 +105,24 @@ print("Wired kwin-mcp into", p)
 PY
     echo "Done. Restart Claude Code to load kwin-mcp."
     ;;
-
   codex)
     CONF="$HOME/.codex/config.toml"
-    python3 - "$CONF" "$REPO" <<'PY'
-import sys
-p, repo = sys.argv[1], sys.argv[2]
-block = f'''
-[mcp_servers.kwin-mcp]
-command = "uvx"
-args = ["--from", "{repo}", "kwin-mcp"]
-'''
-open(p, "a").write(block)
-print("Appended kwin-mcp to", p)
-PY
+    {
+      echo ""
+      echo "[mcp_servers.kwin-mcp]"
+      echo "command = \"uvx\""
+      echo "args = [\"--from\", \"$REPO\", \"kwin-mcp\"]"
+    } >> "$CONF"
+    echo "Appended kwin-mcp to $CONF"
     echo "Done. Restart Codex to load kwin-mcp."
     ;;
-
   cursor)
     CONF="$HOME/.cursor/mcp.json"
-    python3 - "$CONF" "$REPO" <<'PY'
-import sys, json
-p, repo = sys.argv[1], sys.argv[2]
+    export KWIN_REPO="$REPO"
+    python3 - "$CONF" <<'PY'
+import sys, json, os
+p = sys.argv[1]
+repo = os.environ["KWIN_REPO"]
 d = json.load(open(p))
 d.setdefault("mcpServers", {})["kwin-mcp"] = {
     "command": "uvx",
@@ -149,12 +133,13 @@ print("Wired kwin-mcp into", p)
 PY
     echo "Done. Restart Cursor to load kwin-mcp."
     ;;
-
   zed)
     CONF="$HOME/.config/zed/settings.json"
-    python3 - "$CONF" "$REPO" <<'PY'
-import sys, json
-p, repo = sys.argv[1], sys.argv[2]
+    export KWIN_REPO="$REPO"
+    python3 - "$CONF" <<'PY'
+import sys, json, os
+p = sys.argv[1]
+repo = os.environ["KWIN_REPO"]
 try:
     d = json.load(open(p))
 except Exception:
@@ -168,7 +153,6 @@ print("Wired kwin-mcp into", p)
 PY
     echo "Done. Restart Zed to load kwin-mcp."
     ;;
-
   *)
     echo "Unknown target: $action"
     echo "Usage: ./setup.sh [hermes|claude|codex|cursor|zed|check]"

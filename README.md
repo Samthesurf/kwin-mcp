@@ -91,6 +91,9 @@ Installed and verified on this build: `mcp 1.28.1`, `python-uinput 1.0.1`,
 ```bash
 . .venv/bin/activate
 
+# dependency preflight (also run automatically by setup.sh)
+python server.py --check
+
 # stdio MCP server (for Claude/Codex/Hermes MCP clients)
 python server.py
 
@@ -101,30 +104,68 @@ python run.py
 python server.py --http 8080
 ```
 
-### Wiring into an MCP client
+The smoothest path, however, is the one-command `uvx` setup described in the
+next section, which needs no local venv at all.
 
-For a stdio client, point it at the server. Example
+### Wiring into an MCP client (one command)
+
+The recommended way is `uvx`, the Python equivalent of `npx`: it downloads and
+runs the server on first use, then caches it. No clone, no venv, no manual
+install. After `uvx` runs once, the agent just launches
+`uvx --from git+https://github.com/Samthesurf/kwin-mcp kwin-mcp`.
+
+**Automatic (recommended):** run the setup script, which checks dependencies
+and injects the correct config into your agent.
+
+```bash
+git clone https://github.com/Samthesurf/kwin-mcp.git /tmp/kwin-mcp && cd /tmp/kwin-mcp
+./setup.sh hermes      # or: claude | codex | cursor | zed | check
+```
+
+`setup.sh` runs a preflight first. If a system dependency is missing it prints
+exactly what to install (e.g. `sudo pacman -S kdotool`) and stops, so you never
+end up with a half-wired, broken server. If all checks pass it writes the
+`uvx --from ... kwin-mcp` entry into the chosen agent's config.
+
+**Manual:** point the client at the `uvx` launcher. Example
 (`mcp-config.example.json`):
 
 ```json
 {
   "mcpServers": {
     "kwin-mcp": {
-      "command": "/home/samuelsurf/Documents/python_stuff/kwin-mcp/.venv/bin/python",
-      "args": ["/home/samuelsurf/Documents/python_stuff/kwin-mcp/server.py"]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/Samthesurf/kwin-mcp", "kwin-mcp"]
     }
   }
 }
 ```
 
-- **Hermes**: merge the above into `~/.hermes/config.yaml` under
-  `mcp.servers`, or run `hermes computer-use` against this instead of
-  `cua-driver` on a Wayland box.
-- **Claude Code**: `claude mcp add kwin-mcp -- /path/to/.venv/bin/python /path/to/server.py`
-- **Codex / Cursor / etc.**: paste the JSON into their MCP config file.
+- **Hermes**: `./setup.sh hermes` writes it under `mcp_servers` in
+  `~/.hermes/config.yaml`, or paste the JSON there. Restart Hermes to load it.
+  This replaces `cua-driver` for the `computer_use` toolset on a Wayland box.
+- **Claude Code**: `claude mcp add kwin-mcp -- uvx --from git+https://github.com/Samthesurf/kwin-mcp kwin-mcp`
+- **Codex / Cursor / Zed**: `./setup.sh codex|cursor|zed`, or paste the JSON
+  into their MCP config file.
+
+The server is self-sufficient about its environment: when an MCP client does
+not forward `DBUS_SESSION_BUS_ADDRESS` / `WAYLAND_DISPLAY` / `DISPLAY` /
+`XDG_RUNTIME_DIR`, the server discovers the correct session values from
+`/run/user/<uid>/` so `kdotool` and `spectacle` always work.
 
 No API keys, no network calls, no cloud. Everything runs locally against your
 compositor.
+
+### Running from a local checkout (alternative)
+
+If you prefer a local venv instead of `uvx`:
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+python server.py            # stdio MCP server
+python server.py --check   # dependency preflight
+```
 
 ---
 
