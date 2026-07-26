@@ -50,6 +50,11 @@ def base_env() -> dict:
     if not env.get("WAYLAND_DISPLAY"):
         env["WAYLAND_DISPLAY"] = _default_wayland_display()
 
+    if not env.get("XDG_RUNTIME_DIR"):
+        runtime = f"/run/user/{uid}"
+        if os.path.isdir(runtime):
+            env["XDG_RUNTIME_DIR"] = runtime
+
     if not env.get("DISPLAY"):
         env["DISPLAY"] = _default_display()
 
