@@ -1,0 +1,5 @@
+# Python dependencies (pip install -r requirements.txt)
+mcp>=1.0
+python-uinput>=1.0.1
+Pillow>=10.0.0
+pyatspi2; platform_system == "Linux"  # optional, enables get_window_state / element targeting

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "kwin-mcp": {
+      "command": "/home/samuelsurf/Documents/python_stuff/kwin-mcp/.venv/bin/python",
+      "args": ["/home/samuelsurf/Documents/python_stuff/kwin-mcp/server.py"],
+      "env": {}
+    }
+  }
+}

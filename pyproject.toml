@@ -1,0 +1,24 @@
+[project]
+name = "kwin-mcp"
+version = "0.1.0"
+description = "MCP server that controls native Wayland windows on KDE Plasma (the cua-driver X11 gap, solved)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0",
+    "python-uinput>=1.0.1",
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+a11y = ["pyatspi2"]
+
+[project.scripts]
+kwin-mcp = "server:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["kwin_bridge"]
