@@ -14,7 +14,8 @@ dependencies = [
 a11y = ["pyatspi2"]
 
 [project.scripts]
-kwin-mcp = "server:main"
+kwin-mcp = "kwin_bridge.server:main"
+kwin-mcp-preflight = "kwin_bridge.preflight:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
