@@ -1,6 +1,6 @@
 [project]
 name = "kwin-mcp-server"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server that controls native Wayland windows on KDE Plasma (the cua-driver X11 gap, solved). Includes a doctor readiness report, semantic AT-SPI targeting, and an MCP safety contract."
 readme = "README.md"
 license = "MIT"
