@@ -87,6 +87,10 @@ _MOVE_STEP = 40          # max pixels per relative emit
 _MOVE_TOLERANCE = 3      # px considered "on target"
 _MOVE_MAX_ITERS = 60
 
+# Delay before the first keystroke in type_text. Lets the compositor finish
+# routing input to a just-focused widget so leading characters are not dropped.
+_TYPE_START_DELAY = 0.15  # seconds
+
 # Mapping from human key names to uinput keys.
 _KEY_NAME_MAP = {
     "enter": uinput.KEY_ENTER, "return": uinput.KEY_ENTER,
@@ -355,6 +359,12 @@ def type_text(text: str) -> dict:
     could be corrupted with zero signal.
     """
     dev = _keyboard()
+    # Settle delay before the FIRST keystroke. When type_text is called right
+    # after establishing focus (e.g. a click), the compositor may not have
+    # finished routing input to the widget yet, so the first few keystrokes are
+    # silently dropped (observed: "KEYBOARD" -> "BOARD"). A short pause before
+    # emitting lets focus settle so the whole string lands.
+    time.sleep(_TYPE_START_DELAY)
     typed = 0
     dropped_chars: list = []
     for ch in text:
