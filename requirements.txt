@@ -1,5 +1,5 @@
 # Python dependencies (pip install -r requirements.txt)
-mcp>=1.0
+mcp>=1.0,<2.0
 python-uinput>=1.0.1
 Pillow>=10.0.0
 jeepney>=0.8.0   # pure-Python D-Bus client, powers the AT-SPI backend (no pyatspi needed)

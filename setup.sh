@@ -2,13 +2,18 @@
 #
 # kwin-mcp one-command setup.
 #
-# Usage:
-#   ./setup.sh hermes      # wire into ~/.hermes/config.yaml (mcp_servers)
-#   ./setup.sh claude      # wire into ~/.claude.json
-#   ./setup.sh codex       # wire into ~/.codex/config.toml
-#   ./setup.sh cursor      # wire into ~/.cursor/mcp.json
-#   ./setup.sh zed         # wire into ~/.config/zed/settings.json
-#   ./setup.sh check       # just run the dependency preflight, no wiring
+# Usage (run from anywhere, not just the repo root):
+#   ./setup.sh [hermes|claude|codex|cursor|zed|check|verify|help]
+#     hermes   wire into ~/.hermes/config.yaml (mcp_servers)
+#     claude   wire into ~/.claude.json
+#     codex    wire into ~/.codex/config.toml
+#     cursor   wire into ~/.cursor/mcp.json
+#     zed      wire into ~/.config/zed/settings.json
+#     check    just run the dependency preflight, no wiring
+#     verify   preflight + launch the REAL server via uvx and confirm it
+#              starts and reports ready (live smoke test)
+#     help     print this usage text
+#   With no argument it defaults to hermes.
 #
 # What it does:
 #   1. Runs a dependency preflight. If system deps are missing it prints
@@ -22,23 +27,87 @@
 #
 set -euo pipefail
 
+# Make this script work no matter which directory it is invoked from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 REPO="git+https://github.com/Samthesurf/kwin-mcp"
-PYBIN="$(command -v python3 || command -v python)"
-[ -n "$PYBIN" ] || { echo "python3 not found"; exit 1; }
+PYBIN="$(command -v python3 || command -v python || true)"
+if [ -z "$PYBIN" ]; then
+  echo "python3 not found. Install Python 3 first, then re-run ./setup.sh."
+  exit 1
+fi
 
 action="${1:-hermes}"
 
+case "$action" in
+  help|-h|--help)
+    sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+esac
+
+# uv is required for the one-command wiring (agents launch the server via uvx).
+if [ "$action" != "check" ] && ! (command -v uvx >/dev/null || command -v uv >/dev/null); then
+  echo ">> uv is not installed. kwin-mcp's one-command setup launches the server"
+  echo "   with uvx, so it needs uv. Install it with:"
+  echo
+  echo "     curl -LsSf https://astral.sh/uv/install.sh | sh"
+  echo "   (or: python3 -m pip install --user uv)"
+  echo
+  echo "   Then re-run:  ./setup.sh $action"
+  exit 1
+fi
+
 # 1) Preflight -----------------------------------------------------------------
 echo ">> Running dependency preflight..."
-if ! "$PYBIN" preflight.py; then
+if ! "$PYBIN" "$SCRIPT_DIR/preflight.py"; then
   echo
   echo "Preflight failed. Install the missing dependencies above, then re-run:"
   echo "  ./setup.sh $action"
   exit 1
 fi
 
+
 # 2) Wire into the agent ---------------------------------------------------------
 case "$action" in
+  verify)
+    # Live smoke test: launch the REAL server the same way the agent will
+    # (uvx --from ... kwin-mcp) and ask its doctor for a readiness report.
+    # This proves uv + package build + python deps + system deps + the live
+    # window listing all work, not just that the binaries exist.
+    echo ">> Launching the real server via uvx for a live check..."
+    echo "   (first run downloads and builds; this can take a minute)"
+    TMP_OUT="$(mktemp /tmp/kwin-mcp-readiness.XXXXXX)"
+    if ! uvx --from "$REPO" kwin-mcp --doctor >"$TMP_OUT" 2>&1; then
+      echo "FAILED: the server could not be started. Output:"
+      tail -n 25 "$TMP_OUT"
+      rm -f "$TMP_OUT"
+      exit 1
+    fi
+    if grep -q '"ready": true' "$TMP_OUT"; then
+      echo "OK: the server starts and reports ready (windows enumerable)."
+      if grep -q '"backend": "dbus"' "$TMP_OUT"; then
+        echo "OK: AT-SPI semantic targeting is available (D-Bus backend)."
+      fi
+      rm -f "$TMP_OUT"
+      echo
+      echo "kwin-mcp is verified working. Now wire it into your agent with:"
+      echo "  ./setup.sh <hermes|claude|codex|cursor|zed>"
+      exit 0
+    fi
+    echo "WARNING: the server started but did NOT report ready. Readiness block:"
+    python3 - "$TMP_OUT" <<'PY2'
+import sys, json
+d = json.load(open(sys.argv[1]))
+r = d.get("readiness", {})
+print("  ready:", r.get("ready"))
+for b in r.get("blockers", []):
+    print("  blocker:", b)
+print("  next:", r.get("recommended_next_step"))
+PY2
+    rm -f "$TMP_OUT"
+    exit 1
+    ;;
   check)
     echo "Check complete; no wiring requested."
     exit 0
@@ -155,7 +224,7 @@ PY
     ;;
   *)
     echo "Unknown target: $action"
-    echo "Usage: ./setup.sh [hermes|claude|codex|cursor|zed|check]"
+    echo "Usage: ./setup.sh [hermes|claude|codex|cursor|zed|check|verify|help]"
     exit 1
     ;;
 esac

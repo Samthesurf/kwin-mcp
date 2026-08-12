@@ -5,8 +5,11 @@ This package wraps kdotool (enumeration/geometry/focus), spectacle
 an MCP client the same capabilities cua-driver provides on X11. See the
 module docstrings for the Wayland-specific caveats (focus-then-inject, single
 cursor, no background targeting).
+
+Deliberately imports nothing heavy here: submodules are imported explicitly by
+the code that uses them (server.py, preflight.py, tests). This keeps
+``import kwin_bridge`` light so the dependency preflight can run with a plain
+system Python that does not yet have uinput/jeepney installed.
 """
 
-from . import windows, screenshot, input as input_mod, a11y, _env  # noqa: F401
-
-__all__ = ["windows", "screenshot", "input_mod", "a11y"]
+__all__ = ["windows", "screenshot", "input", "a11y", "doctor"]

@@ -15,6 +15,47 @@ X11: window listing, screenshots, clicks, typing, dragging, key presses, and
 
 ---
 
+## Install (about 3 minutes)
+
+kwin-mcp targets **KDE Plasma on Wayland**. It is a Python MCP server, so any
+MCP host (Claude Code, Codex, Cursor, Zed, Hermes) can use it.
+
+1. **System deps + input permission** (one-time)
+   ```bash
+   sudo pacman -S kdotool spectacle                 # Arch
+   sudo usermod -aG input "$USER"                   # allow /dev/uinput
+   # log out and back in so the new group applies
+   ```
+   Not on Arch? See the Dependencies table below for the per-distro package
+   names.
+
+2. **Install uv** (once) - powers the one-command launcher
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+3. **Wire it into your agent**
+   ```bash
+   git clone https://github.com/Samthesurf/kwin-mcp.git /tmp/kwin-mcp && cd /tmp/kwin-mcp
+   ./setup.sh hermes     # or: claude | codex | cursor | zed
+   ```
+   `setup.sh` runs a preflight, prints exactly what is missing if anything is
+   (and stops, never half-wiring), then adds the server to your agent's config.
+   Restart the agent and you are done. To be sure it launches the real server
+   (uv + build + deps + live window listing), run `./setup.sh verify` and read
+   the readiness report. `./setup.sh help` prints usage; `./setup.sh check`
+   just runs the preflight without wiring anything.
+
+You can also install the Python package directly and run it yourself, e.g.:
+
+  ```bash
+  uv tool install --from git+https://github.com/Samthesurf/kwin-mcp kwin-mcp
+  kwin-mcp --doctor     # print the readiness report
+  kwin-mcp              # start the stdio MCP server
+  ```
+
+---
+
 ## What it can do
 
 | Tool | Purpose |
