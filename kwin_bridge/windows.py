@@ -20,12 +20,39 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from ._env import base_env
 
 UUID_RE = re.compile(r"\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}")
+
+# Cache list_windows() briefly. get_window() re-enumerates the whole desktop
+# (which launches ~4 kdotool subprocesses per window, ~96 for a full desktop),
+# and that dominates the ~4.5s cost of every a11y/geometry call. A short TTL
+# makes repeated get_window calls on the same window near-instant. Window
+# UUIDs change when a window is recreated, so the TTL is kept deliberately
+# short and every mutating operation (activate/close/minimize/raise) and the
+# explicit get_window() fallback invalidate it.
+# 5s because a single get_window_state does a get_window + a ~1s AT-SPI walk;
+# a 1s TTL expires mid-workflow and forces a re-enumeration every call.
+_LIST_TTL = 5.0  # seconds
+_WINDOW_CACHE: Optional[tuple[float, list]] = None  # (monotonic, windows)
+
+
+def _invalidate_window_cache() -> None:
+    global _WINDOW_CACHE
+    _WINDOW_CACHE = None
+
+
+def _cached_list() -> Optional[list]:
+    global _WINDOW_CACHE
+    if _WINDOW_CACHE is not None:
+        ts, wins = _WINDOW_CACHE
+        if time.monotonic() - ts < _LIST_TTL:
+            return wins
+    return None
 
 
 @dataclass
@@ -105,7 +132,14 @@ def _parse_geometry(text: str) -> tuple[int, int, int, int]:
 
 
 def list_windows() -> list[Window]:
-    """Return every top-level window on the desktop (native Wayland + XWayland)."""
+    """Return every top-level window on the desktop (native Wayland + XWayland).
+
+    Results are cached briefly (see _LIST_TTL) so consecutive get_window /
+    find_window calls are fast; mutating operations invalidate the cache.
+    """
+    cached = _cached_list()
+    if cached is not None:
+        return cached
     out = _kdotool(["search", ""])
     uuids = UUID_RE.findall(out)
     windows: list[Window] = []
@@ -148,12 +182,20 @@ def list_windows() -> list[Window]:
                 raw={"geometry_raw": geo_text.strip()},
             )
         )
+    global _WINDOW_CACHE
+    _WINDOW_CACHE = (time.monotonic(), windows)
     return windows
 
 
 def get_window(window_id: str) -> Window:
     if not is_uuid(window_id):
         raise ValueError(f"not a valid KDE window UUID: {window_id!r}")
+    for w in list_windows():
+        if w.window_id == window_id:
+            return w
+    # Not found in the (possibly cached) list. The window UUID may have changed
+    # after a recreation, so force a fresh enumeration before giving up.
+    _invalidate_window_cache()
     for w in list_windows():
         if w.window_id == window_id:
             return w
@@ -178,18 +220,24 @@ def active_window() -> Optional[Window]:
 def activate(window_id: str) -> None:
     """Raise + focus a window (switching virtual desktop if needed)."""
     _kdotool(["windowactivate", _normalize_window_arg(window_id)])
+    # Focus changes don't alter the window list, but geometry/stacking can;
+    # invalidate so the next read is fresh.
+    _invalidate_window_cache()
 
 
 def raise_window(window_id: str) -> None:
     _kdotool(["windowraise", _normalize_window_arg(window_id)])
+    _invalidate_window_cache()
 
 
 def minimize(window_id: str) -> None:
     _kdotool(["windowminimize", _normalize_window_arg(window_id)])
+    _invalidate_window_cache()
 
 
 def close(window_id: str) -> None:
     _kdotool(["windowclose", _normalize_window_arg(window_id)])
+    _invalidate_window_cache()
 
 
 def focus_and_screenshot_target(window_id: str) -> Window:
