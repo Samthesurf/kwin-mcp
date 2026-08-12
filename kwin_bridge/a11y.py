@@ -3,17 +3,23 @@ Accessibility tree (AT-SPI) introspection for KDE Plasma on Wayland.
 
 Many GTK/Qt/KDE applications expose an AT-SPI accessibility tree even on
 Wayland, where the old X11 `get_window_state` trick does not work. This
-module walks the desktop accessibility tree and returns a structured list of
-interactive elements (with their on-screen bounds, state flags and the actions
-they expose) so a caller can target them three ways:
+module returns a structured list of interactive elements (with their on-screen
+bounds, state flags and the actions they expose) so a caller can target them
+three ways:
 
   * by index        (``click_element``, ``perform_action``, ``set_value``)
   * semantically     (``resolve_elements`` with role / name / text filters)
   * by coordinates   (fall back to the input module's absolute clicks)
 
-This module is OPTIONAL: it imports pyatspi lazily and degrades gracefully
-when pyatspi or an accessibility bus is unavailable. It is used by the
-`get_window_state` / `capture(mode='som')` tools when available.
+Two backends are supported and chosen automatically:
+
+  * ``atspi_dbus`` (preferred) - a pure-D-Bus AT-SPI client (jeepney) with no
+    system dependency. This is what works on Arch, where pyatspi is not
+    packaged.
+  * ``pyatspi`` - only if the legacy pyatspi module happens to be importable.
+
+The module degrades gracefully when neither backend is available, so calls
+fall back to coordinate input instead of crashing.
 
 Note: AT-SPI element bounds are in screen coordinates, so they feed directly
 into the input module's absolute click coordinates.
@@ -25,13 +31,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Roles we consider "interactive" for SOM overlays.
-_INTERACTIVE_ROLES = {
-    "push button", "button", "text", "entry", "text entry", "edit",
-    "check box", "check button", "radio button", "combo box", "spin button",
-    "slider", "link", "menu item", "list item", "tab", "page tab",
-    "toggle button", "icon", "image", "label", "table cell", "scroll bar",
-}
+from . import atspi_dbus
 
 
 @dataclass
@@ -46,10 +46,22 @@ class A11yElement:
     states: list = field(default_factory=list)
     actions: list = field(default_factory=list)
     editable: bool = False
-    raw: dict = field(default_factory=dict)
+    # Opaque handle for acting on the node: (bus, path) for the D-Bus backend,
+    # a live pyatspi node for the pyatspi backend. Not part of the public shape.
+    handle: object = None
+
+
+# Roles we consider "interactive" for SOM overlays.
+_INTERACTIVE_ROLES = {
+    "push button", "button", "text", "entry", "text entry", "edit",
+    "check box", "check button", "radio button", "combo box", "spin button",
+    "slider", "link", "menu item", "list item", "tab", "page tab",
+    "toggle button", "icon", "image", "label", "table cell", "scroll bar",
+}
 
 
 def _atspi_available() -> bool:
+    """True if the legacy pyatspi module is importable."""
     try:
         import pyatspi  # noqa: F401
         return True
@@ -57,8 +69,24 @@ def _atspi_available() -> bool:
         return False
 
 
+_backend_cache = None
+
+
+def _backend() -> Optional[str]:
+    """Pick the AT-SPI backend: 'dbus' (preferred), 'pyatspi', or None."""
+    global _backend_cache
+    if _backend_cache is None:
+        if atspi_dbus.available():
+            _backend_cache = "dbus"
+        elif _atspi_available():
+            _backend_cache = "pyatspi"
+        else:
+            _backend_cache = None
+    return _backend_cache
+
+
 def _el_to_dict(el: A11yElement) -> dict:
-    return {
+    d = {
         "index": el.index,
         "role": el.role,
         "name": el.name,
@@ -72,36 +100,55 @@ def _el_to_dict(el: A11yElement) -> dict:
         "actions": el.actions,
         "editable": el.editable,
     }
+    return d
 
 
 def _collect_nodes(window_id: str, max_elements: int = 500,
                    only_interactive: bool = True):
-    """Walk the AT-SPI tree for the app owning ``window_id``.
+    """Return (elements: list[(A11yElement, handle)], win) for a window.
 
-    Returns (elements: list[(A11yElement, node)], window) where ``node`` is
-    the live pyatspi object for action/value stateful operations. Raises
-    ValueError for a bad UUID; returns only_interactive filtering.
+    Renders nothing publicly; raises RuntimeError if no AT-SPI backend is
+    available.
     """
-    if not _atspi_available():
+    be = _backend()
+    if be is None:
         raise RuntimeError(
-            "pyatspi not installed or accessibility bus unavailable"
+            "AT-SPI unavailable: neither the D-Bus backend (jeepney) nor "
+            "pyatspi is usable"
         )
-    import pyatspi
-
     from .windows import get_window, is_uuid
     if not is_uuid(window_id):
         raise ValueError(f"not a valid KDE window UUID: {window_id!r}")
     win = get_window(window_id)
+
+    if be == "dbus":
+        if not win.pid:
+            raise RuntimeError(
+                "window reports no PID; cannot match its AT-SPI tree"
+            )
+        children = atspi_dbus.elements_for_window(
+            win.pid, max_elements=max_elements, only_interactive=only_interactive)
+        out = []
+        for c in children:
+            handle = c.get("handle")  # read-only: cached lists must not mutate
+            out.append((A11yElement(
+                index=c["index"], role=c["role"], name=c["name"],
+                x=c["x"], y=c["y"], width=c["width"], height=c["height"],
+                states=c["states"], actions=c["actions"], editable=c["editable"],
+                handle=handle,
+            ), handle))
+        return out, win
+
+    # pyatspi backend.
+    import pyatspi
 
     registry = pyatspi.Registry
     desktop = registry.getDesktop(0)
     pairs: list = []
     idx = 0
 
-    def _state_flags(node, role) -> tuple[list, bool, list]:
-        states: list = []
-        actions: list = []
-        editable = False
+    def _state_flags(node) -> tuple[list, bool, list]:
+        states, editable, actions = [], False, []
         try:
             st = node.getState()
             for flag, label in (
@@ -148,15 +195,14 @@ def _collect_nodes(window_id: str, max_elements: int = 500,
                 x, y, w, h = int(ext.x), int(ext.y), int(ext.width), int(ext.height)
             except Exception:
                 pass
-            states, editable, actions = _state_flags(node, role)
+            states, editable, actions = _state_flags(node)
         except Exception:
             return
         if not only_interactive or role in _INTERACTIVE_ROLES:
             el = A11yElement(
                 index=idx, role=role, name=name,
                 x=x, y=y, width=w, height=h,
-                states=states, actions=actions, editable=editable,
-                raw={"role": role, "name": name},
+                states=states, actions=actions, editable=editable, handle=node,
             )
             pairs.append((el, node))
             idx += 1
@@ -168,7 +214,6 @@ def _collect_nodes(window_id: str, max_elements: int = 500,
         except Exception:
             pass
 
-    # Find the application node matching the window's PID/app name.
     target = None
     for d in range(desktop.childCount):
         app = desktop.getChildAtIndex(d)
@@ -181,7 +226,6 @@ def _collect_nodes(window_id: str, max_elements: int = 500,
             continue
     if target is None and desktop.childCount:
         target = desktop.getChildAtIndex(0)
-
     if target is not None:
         walk(target)
     return pairs, win
@@ -192,8 +236,8 @@ def get_window_state(window_id: str, max_elements: int = 100,
     """Return the AT-SPI tree for the app owning a KDE window UUID.
 
     Returns a dict with 'available' (bool), 'elements' (list of dicts with
-    index, role, name, bounds, state flags, actions, editable) and 'error'
-    when unavailable. When 'available' is False the caller should fall back to
+    index, role, name, bounds, state flags, actions, editable) and 'error' when
+    unavailable. When 'available' is False the caller should fall back to
     coordinate-based clicks.
     """
     try:
@@ -212,6 +256,7 @@ def get_window_state(window_id: str, max_elements: int = 100,
         "window_title": win.title,
         "elements": [_el_to_dict(el) for (el, _n) in pairs],
         "count": len(pairs),
+        "backend": _backend(),
     }
 
 
@@ -222,8 +267,8 @@ def resolve_elements(window_id: str, *, role: str = "", name: str = "",
 
     All filters are case-insensitive substrings. ``text`` additionally matches
     an element's name (buttons and text nodes expose their label as the name).
-    Returns a flat list ordered by depth-first document order. When pyatspi is
-    unavailable this returns an empty list (so callers can fall back to
+    Returns a flat list ordered by depth-first document order. When no AT-SPI
+    backend is available this returns an empty list (so callers fall back to
     coordinate input) rather than raising.
     """
     try:
@@ -243,6 +288,7 @@ def resolve_elements(window_id: str, *, role: str = "", name: str = "",
             out.append(el)
     return out
 
+
 def _node_by_index(window_id: str, element_index: int,
                    max_elements: int = 500):
     # Use the SAME numbering as get_window_state (interactive elements only),
@@ -253,16 +299,16 @@ def _node_by_index(window_id: str, element_index: int,
                                      only_interactive=True)
     except (RuntimeError, ValueError):
         return None, None
-    for el, node in pairs:
+    for el, handle in pairs:
         if el.index == element_index:
-            return el, node
+            return el, handle
     return None, None
 
 
 def click_element(window_id: str, element_index: int, max_elements: int = 100,
                   button: str = "left", double: bool = False) -> dict:
     """Resolve an AT-SPI element index to its center and click it."""
-    el, _node = _node_by_index(window_id, element_index, max_elements=max_elements)
+    el, _handle = _node_by_index(window_id, element_index, max_elements=max_elements)
     if el is None:
         return {"ok": False, "error": f"element {element_index} not found"}
     if el.width == 0 or el.height == 0:
@@ -298,13 +344,18 @@ def perform_action(window_id: str, element_index: int, action: str = "",
     """Invoke an AT-SPI action on an element (e.g. 'press', 'activate').
 
     When ``action`` is empty the element's primary action (index 0) is used.
-    Requires pyatspi; returns an error dict when unavailable.
+    Requires an AT-SPI backend; returns an error dict when unavailable.
     """
-    el, node = _node_by_index(window_id, element_index, max_elements=max_elements)
-    if el is None or node is None:
+    el, handle = _node_by_index(window_id, element_index, max_elements=max_elements)
+    if el is None:
         return {"ok": False, "error": f"element {element_index} not found"}
+    if isinstance(handle, tuple) and _backend() == "dbus":
+        ok, detail = atspi_dbus.perform_action(handle, action)
+        return {"ok": ok, "action": action or "primary",
+                "element": el.index, **( {"error": detail} if not ok else {})}
+    # pyatspi backend.
     try:
-        atn = node.queryAction()
+        atn = handle.queryAction()
         n = int(atn.nActions)
         if n == 0:
             return {"ok": False, "error": f"element {element_index} exposes no actions"}
@@ -327,11 +378,16 @@ def perform_action(window_id: str, element_index: int, action: str = "",
 def set_value(window_id: str, element_index: int, value: str,
               max_elements: int = 500) -> dict:
     """Write a value to a settable AT-SPI element (text field, slider, ...)."""
-    el, node = _node_by_index(window_id, element_index, max_elements=max_elements)
-    if el is None or node is None:
+    el, handle = _node_by_index(window_id, element_index, max_elements=max_elements)
+    if el is None:
         return {"ok": False, "error": f"element {element_index} not found"}
+    if isinstance(handle, tuple) and _backend() == "dbus":
+        ok, detail = atspi_dbus.set_value(handle, value)
+        return {"ok": ok, "element": el.index, "value": str(value),
+                **( {"error": detail} if not ok else {})}
+    # pyatspi backend.
     try:
-        et = node.queryEditableText()
+        et = handle.queryEditableText()
         et.setTextContents(str(value))
         return {"ok": True, "element": el.index, "value": str(value)}
     except Exception as exc:  # noqa: BLE001

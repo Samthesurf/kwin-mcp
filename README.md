@@ -111,10 +111,10 @@ id -nG | tr ' ' '\n' | grep -x input   # should print 'input'
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-# optional, enables AT-SPI element/action/value targeting + semantic clicks.
-# pyatspi is NOT a pip package; install from your distro:
-#   Debian/Ubuntu: sudo apt install python3-pyatspi
-#   Fedora/Arch:   python3-pyatspi / python-pyatspi (AUR) ; then add to venv.
+# AT-SPI element/action/value targeting + semantic clicks work out of the box:
+# kwin-mcp talks to AT-SPI directly over D-Bus via jeepney (already a
+# dependency), so no pyatspi is required. On distros where the legacy pyatspi
+# module happens to be installed, it is used as a fallback backend.
 ```
 
 Installed and verified on this build: `mcp 1.28.1`, `python-uinput 1.0.1`,
@@ -239,9 +239,12 @@ splash instead of the live desktop; the capture path adds a settle delay and a
 variance-based validation that retries up to 3 times, so the returned frame is
 always the real desktop.
 
-AT-SPI (`get_window_state`, `click_element`) works for GTK/Qt/KDE apps that
-expose an accessibility tree; it is optional and degrades gracefully when
-`pyatspi2` is missing.
+AT-SPI (`get_window_state`, `click_element`, `perform_action`, `set_value`,
+semantic clicks) works for GTK/Qt/KDE apps that expose an accessibility tree.
+It talks to AT-SPI directly over D-Bus (via `jeepney`, a pure-Python client),
+so it needs no `pyatspi` and works on Arch; the legacy `pyatspi` module is used
+only as a fallback if present. It degrades gracefully to coordinate input when
+no AT-SPI backend is available.
 
 ---
 
@@ -260,7 +263,8 @@ kwin-mcp/
     ├── windows.py         # kdotool wrapper: enumerate/geometry/focus/close
     ├── screenshot.py      # spectacle wrapper + crop + retry/validate
     ├── input.py           # /dev/uinput virtual pointer+keyboard, closed-loop move
-    ├── a11y.py            # optional AT-SPI tree + element/action/value targeting
+    ├── a11y.py            # AT-SPI front-end (semantic resolve / action / value)
+    ├── atspi_dbus.py      # pure-D-Bus AT-SPI backend (jeepney, no pyatspi)
     ├── doctor.py          # structured JSON readiness report
     └── preflight.py       # actionable dependency check
 ```

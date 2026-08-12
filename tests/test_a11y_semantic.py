@@ -157,6 +157,8 @@ def _stub_window(monkeypatch):
 
 def test_semantic_lifecycle(monkeypatch):
     _install_fake_pyatspi()
+    import kwin_bridge.a11y as a11y
+    monkeypatch.setattr(a11y, "_backend", lambda: "pyatspi")  # force pyatspi path
     a11y, stub, clicks = _stub_window(monkeypatch)
 
     st = a11y.get_window_state(stub.window_id)
@@ -200,9 +202,27 @@ def test_semantic_lifecycle(monkeypatch):
 def test_missing_pyatspi_degrades_gracefully(monkeypatch):
     import kwin_bridge.a11y as a11y
     sys.modules.pop("pyatspi", None)
-    # Simulate no pyatspi: monkeypatch _atspi_available to False.
     monkeypatch.setattr(a11y, "_atspi_available", lambda: False)
+    monkeypatch.setattr(a11y, "_backend", lambda: None)  # no backend available
     st = a11y.get_window_state("{fake}")
     assert st["available"] is False
     assert a11y.resolve_elements("{fake}", role="button") == []
     assert a11y.perform_action("{fake}", 0)["ok"] is False
+
+
+def test_dbus_backend_live():
+    """On a machine with a reachable at-spi bus, the pure-D-Bus backend works.
+
+    Skips when there is no at-spi socket (e.g. a headless CI box).
+    """
+    import kwin_bridge.atspi_dbus as adb
+    if not adb.available():
+        pytest.skip("no at-spi bus available on this host")
+    assert adb.available()
+    # The registry root must expose at least the accessibility apps.
+    apps = list(adb._application_nodes())
+    assert len(apps) > 0
+    # Every app should resolve a PID + bus name.
+    for bus, path, pid, name in apps[:5]:
+        assert bus.startswith(":") and path.startswith("/")
+        assert pid is None or pid > 0

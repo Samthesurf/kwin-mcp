@@ -87,15 +87,15 @@ def run_doctor() -> dict:
     except Exception as exc:  # noqa: BLE001
         wind_list = _b(False, f"kdotool window listing failed: {exc}")
 
-    # Accessibility stack.
-    atspi = False
+    # Accessibility stack: the pure-D-Bus backend (jeepney) is preferred; the
+    # legacy pyatspi backend is a fallback. Both are reported via a11y._backend.
+    be = None
     try:
-        import pyatspi  # noqa: F401
-        registry = pyatspi.Registry
-        registry.getDesktop(0)
-        atspi = True
+        from . import a11y
+        be = a11y._backend()
     except Exception:  # noqa: BLE001
-        atspi = False
+        be = None
+    atspi_ok = be is not None
 
     auto_report = {
         "platform": {
@@ -122,8 +122,9 @@ def run_doctor() -> dict:
             "backend": "/dev/uinput virtual device (python-uinput)",
         },
         "accessibility": {
-            "pyatspi_available": atspi,
-            "element_targeting": atspi,
+            "available": atspi_ok,
+            "backend": be or "none",
+            "element_targeting": atspi_ok,
         },
         "screenshot": {
             "spectacle_present": spectacle is not None,
@@ -150,7 +151,7 @@ def run_doctor() -> dict:
     can_list = bool(wind_list.get("ok"))
     can_input = bool(uinput_w)
     can_capture = spectacle is not None
-    can_atspi = atspi
+    can_atspi = atspi_ok
 
     report = {
         "platform": auto_report["platform"],
