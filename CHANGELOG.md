@@ -2,6 +2,44 @@
 
 All notable changes to kwin-mcp.
 
+## [0.3.0] - 2026-08-12
+
+### Added
+- **Keyboard-first semantic navigation** (new tools): `focus_element` moves
+  AT-SPI focus directly via `Component.GrabFocus` (no pixel coordinates / no
+  Tab-count guessing); `focused_element` reports which element owns focus;
+  `keyboard_navigate` moves focus next/prev through the focusable elements and
+  returns the `from` / `to` elements so a host can drive a whole workflow
+  without screenshots or coordinates.
+- **`paste` tool**: writes long or non-ASCII text via the Wayland clipboard
+  (`wl-copy`) + Ctrl+V. A single keystroke replaces char-by-char typing, and
+  unsupported characters (em dashes, curly quotes) are preserved verbatim.
+
+### Fixed
+- **`type_text` is now honest**: it returns `typed`, `dropped`, `dropped_chars`
+  and `requested` instead of a bare `ok:True` with length. Unsupported
+  characters are reported rather than silently skipped, so a corrupted string
+  is no longer hidden.
+- **Dropped leading characters** when typing right after establishing focus
+  (observed: `KEYBOARD` -> `BOARD`): a short settle delay before the first
+  keystroke lets the compositor route focus so the whole string lands.
+- **`perform_action` crashed on the D-Bus backend** because `GetNActions`
+  returns a type-tag-wrapped tuple (`('i', 2),`); added a `_norm_int` unwrapper
+  used in both `_node_info` and `perform_action`. Actions now list correctly
+  (e.g. `['Press', 'SetFocus']`) instead of crashing.
+- **`keyboard_navigate` failed on apps that report `focusable=False`**
+  (Kate marks everything non-focusable): it now falls back to interactive
+  roles when no element reports the focusable state, and tracks the last
+  position in memory because many Qt apps lie about the `focused` flag.
+- **~4.5s window-resolution hot path**: `get_window()` re-enumerated the whole
+  desktop (~96 kdotool subprocesses) on every call. Added a short TTL cache on
+  `list_windows()`, invalidated by mutating operations, so repeated calls drop
+  to ~0.000s and `get_window_state` goes from ~6s to ~0.02s after warmup.
+
+### Changed
+- Package version bumped to 0.3.0. README tool table updated with the new
+  keyboard-first and paste tools.
+
 ## [0.2.0] - 2026-08-12
 
 ### Added

@@ -41,7 +41,8 @@ sudo usermod -aG input "$USER"                   # allow /dev/uinput
 # log out and back in so the new group applies
 ```
 
-Not on Arch? See the Dependencies table below for the per-distro package names.
+Not on Arch? See the [Dependencies](#dependencies) table below for the
+per-distro package names.
 
 ### Wire it into your agent
 
@@ -85,6 +86,10 @@ kwin-mcp --check      # dependency preflight
 | `click_element` | Click an AT-SPI element by index |
 | `perform_action` | Invoke any AT-SPI action on an element (press, activate, toggle, ...) |
 | `set_value` | Write a value to a settable element (text fields, sliders, spinners) |
+| `focus_element` | Move keyboard focus to an AT-SPI element directly (no pixel coords) |
+| `focused_element` | Report which element currently owns keyboard focus |
+| `keyboard_navigate` | Move keyboard focus next/prev through the focusable elements |
+| `paste` | Paste text via the Wayland clipboard + Ctrl+V (fast, preserves non-ASCII) |
 | `activate` / `raise` / `minimize` / `close_window` | Window management |
 | `get_cursor_position` | Current pointer location |
 | `health` | Environment/dependency diagnostics |
