@@ -2,4 +2,8 @@
 mcp>=1.0
 python-uinput>=1.0.1
 Pillow>=10.0.0
-pyatspi2; platform_system == "Linux"  # optional, enables get_window_state / element targeting
+
+# Optional AT-SPI element/action/value targeting (get_window_state,
+# perform_action, set_value, semantic click). NOTE: pyatspi is NOT a PyPI
+# package - install it from your distro, e.g. python3-pyatspi (Debian/Ubuntu)
+# or python-pyatspi (Fedora/Arch-AUR), then the a11y tools activate.

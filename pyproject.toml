@@ -1,9 +1,10 @@
 [project]
 name = "kwin-mcp"
-version = "0.1.0"
-description = "MCP server that controls native Wayland windows on KDE Plasma (the cua-driver X11 gap, solved)."
+version = "0.2.0"
+description = "MCP server that controls native Wayland windows on KDE Plasma (the cua-driver X11 gap, solved). Includes a doctor readiness report, semantic AT-SPI targeting, and an MCP safety contract."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 dependencies = [
     "mcp>=1.0",
     "python-uinput>=1.0.1",
@@ -11,10 +12,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-a11y = ["pyatspi2"]
+# pyatspi is a distro package (python3-pyatspi / python-pyatspi), not on PyPI.
+# See README "Dependencies" for how to enable the optional AT-SPI targeting.
+dev = ["pytest", "build", "twine"]
 
 [project.scripts]
 kwin-mcp = "kwin_bridge.server:main"
+kwin-mcp-doctor = "kwin_bridge.doctor:main"
 kwin-mcp-preflight = "kwin_bridge.preflight:main"
 
 [build-system]

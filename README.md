@@ -22,21 +22,55 @@ X11: window listing, screenshots, clicks, typing, dragging, key presses, and
 | `list_windows` | Enumerate **every** top-level window (native Wayland + XWayland), with UUID, title, class, pid, geometry |
 | `active_window` | Return the currently focused window |
 | `capture` | Screenshot the desktop (`mode=desktop`) or a specific window (`mode=window`, `window_id=...`); crops to exact window bounds |
-| `click` / `double_click` | Click at screen or window-local coordinates |
+| `click` / `double_click` | Click at screen or window-local coordinates, OR target an element by `element_index` or semantic `role`/`name`/`text` |
 | `drag` | Drag between two points (screen or window-local) |
 | `type` | Type a string into the focused target |
 | `press_key` | Press a key, optionally with modifiers (e.g. `["ctrl"]`) |
 | `scroll` | Scroll the wheel up/down |
-| `get_window_state` | AT-SPI accessibility tree for a window (requires `pyatspi2`) |
+| `get_window_state` | AT-SPI accessibility tree for a window (index, role, name, bounds, state flags, actions, editable) |
 | `click_element` | Click an AT-SPI element by index |
+| `perform_action` | Invoke any AT-SPI action on an element (press, activate, toggle, ...) |
+| `set_value` | Write a value to a settable element (text fields, sliders, spinners) |
 | `activate` / `raise` / `minimize` / `close_window` | Window management |
 | `get_cursor_position` | Current pointer location |
 | `health` | Environment/dependency diagnostics |
+| `doctor` | One JSON readiness report (platform, windowing, input, AT-SPI, screenshot, portals, blockers) |
 
 Windows are identified by a stable KDE window UUID of the form
 `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}` (exactly what `kdotool` prints).
 
 ---
+
+## Readiness report (`doctor`) and safety contract
+
+### `doctor` / `kwin-mcp-doctor`
+
+Run `kwin-mcp --doctor` (or `kwin-mcp-doctor`) to get a single structured JSON
+document describing the desktop, the windowing backend (with a *live* window
+list probe), the input path, AT-SPI, the screenshot path, and XDG portal
+availability. It ends with a `readiness` summary carrying explicit `blockers`
+and a `recommended_next_step`, so an MCP host or a human can render one report
+instead of parsing prose:
+
+```bash
+kwin-mcp --doctor | jq .readiness
+```
+
+The same report is exposed as the `doctor` MCP tool.
+
+### MCP safety annotations
+
+Since v0.2 every tool carries an MCP `ToolAnnotations` so hosts can warn before
+invoking a mutating tool:
+
+| Class | Tools | Contract |
+|-------|-------|----------|
+| Read-only observation | `list_windows`, `active_window`, `get_window_state`, `get_cursor_position`, `health`, `doctor` | `readOnlyHint=true` |
+| UI-state mutators | `capture`, `activate`, `raise_window`, `minimize`, `scroll` | `readOnlyHint=false`, `destructiveHint=false` |
+| Desktop-action mutators | `click`, `click_element`, `drag`, `type_text`, `press_key`, `perform_action`, `set_value`, `close_window` | `destructiveHint=true` (+ `openWorldHint=true`) |
+
+Annotations are safety hints, not an authorization system. Treat any call that
+could submit, delete, send, or purchase as requiring user approval.
 
 ## Dependencies
 
@@ -77,8 +111,10 @@ id -nG | tr ' ' '\n' | grep -x input   # should print 'input'
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-# optional, enables AT-SPI element targeting:
-pip install pyatspi2
+# optional, enables AT-SPI element/action/value targeting + semantic clicks.
+# pyatspi is NOT a pip package; install from your distro:
+#   Debian/Ubuntu: sudo apt install python3-pyatspi
+#   Fedora/Arch:   python3-pyatspi / python-pyatspi (AUR) ; then add to venv.
 ```
 
 Installed and verified on this build: `mcp 1.28.1`, `python-uinput 1.0.1`,
@@ -93,6 +129,9 @@ Installed and verified on this build: `mcp 1.28.1`, `python-uinput 1.0.1`,
 
 # dependency preflight (also run automatically by setup.sh)
 python server.py --check
+
+# JSON readiness report
+python server.py --doctor
 
 # stdio MCP server (for Claude/Codex/Hermes MCP clients)
 python server.py
@@ -221,7 +260,9 @@ kwin-mcp/
     ├── windows.py         # kdotool wrapper: enumerate/geometry/focus/close
     ├── screenshot.py      # spectacle wrapper + crop + retry/validate
     ├── input.py           # /dev/uinput virtual pointer+keyboard, closed-loop move
-    └── a11y.py            # optional AT-SPI tree + element click
+    ├── a11y.py            # optional AT-SPI tree + element/action/value targeting
+    ├── doctor.py          # structured JSON readiness report
+    └── preflight.py       # actionable dependency check
 ```
 
 ---
