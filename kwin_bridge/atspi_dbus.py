@@ -213,7 +213,7 @@ def _node_info(bus, path, role, name):
         pass
     if _ACTION in ifaces:
         try:
-            n = _call(path, _ACTION, "GetNActions", "", (), dest=bus)[0]
+            n = _norm_int(_call(path, _ACTION, "GetNActions", "", (), dest=bus)[0])
             actions = [
                 _call(path, _ACTION, "GetName", "i", (i,), dest=bus)[0] or ""
                 for i in range(int(n))
@@ -258,6 +258,28 @@ def _norm_str(v) -> str:
                 picked = part
         return clean(picked)
     return clean(str(v or ""))
+
+
+def _norm_int(v) -> int:
+    """Unwrap an AT-SPI integer reply into a plain int.
+
+    ``GetNActions`` (and other int-returning methods) can come back as a bare
+    int, ``(int,)``, or ``(('i', int),)``. Return the underlying int, or 0 if
+    none can be extracted.
+    """
+    if isinstance(v, (tuple, list)):
+        for part in reversed(v):
+            if isinstance(part, (int,)) and not isinstance(part, bool):
+                return int(part)
+            if isinstance(part, (tuple, list)) and len(part) == 2:
+                # ('i', 2) type-tag form
+                if isinstance(part[1], (int,)) and not isinstance(part[1], bool):
+                    return int(part[1])
+        return 0
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _walk(bus, path, max_elements, only_interactive,
@@ -367,7 +389,7 @@ def elements_for_window(pid: int, max_elements: int = 500,
 def perform_action(handle, action: str = "") -> tuple:
     bus, path = handle
     try:
-        n = _call(path, _ACTION, "GetNActions", "", (), dest=bus)[0]
+        n = _norm_int(_call(path, _ACTION, "GetNActions", "", (), dest=bus)[0])
         if int(n) == 0:
             return False, "element exposes no actions"
         idx = 0
@@ -375,7 +397,7 @@ def perform_action(handle, action: str = "") -> tuple:
             idx = -1
             for i in range(int(n)):
                 nm = _call(path, _ACTION, "GetName", "i", (i,), dest=bus)[0] or ""
-                if nm.strip().lower() == action.lower():
+                if _norm_str(nm).strip().lower() == action.lower():
                     idx = i
                     break
             if idx == -1:
@@ -384,6 +406,24 @@ def perform_action(handle, action: str = "") -> tuple:
                 return False, f"no action {action!r}; available: {names}"
         ok = bool(_call(path, _ACTION, "DoAction", "i", (idx,), dest=bus)[0])
         return ok, ""
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
+def grab_focus(handle) -> tuple:
+    """Move keyboard focus to a node via the AT-SPI Component.GrabFocus call.
+
+    Returns (ok, detail). This is the keyboard-first navigation primitive: it
+    moves focus to a specific element without guessing Tab counts, so a host
+    can target an element from the a11y tree and act on it with Enter/Space.
+    """
+    bus, path = handle
+    ifaces = _interfaces(bus, path)
+    if _COMP not in ifaces:
+        return False, "element exposes no Component interface (cannot grab focus)"
+    try:
+        _call(path, _COMP, "GrabFocus", "", (), dest=bus)
+        return True, ""
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)
 

@@ -344,16 +344,27 @@ def drag_window(window_id: str, from_x: int, from_y: int, to_x: int, to_y: int,
          button=button, steps=steps)
 
 
-def type_text(text: str) -> None:
-    """Type a string as keyboard events at the current cursor focus."""
+def type_text(text: str) -> dict:
+    """Type a string as keyboard events at the current cursor focus.
+
+    Returns a dict instead of None so callers can see what actually happened:
+    ``typed`` (chars emitted), ``dropped`` (chars skipped because they have no
+    mapping in the US-layout map and are not a-z/0-9), ``dropped_chars`` (the
+    actual skipped characters) and ``had_shift``. This makes typing honest:
+    previously any unsupported character was silently skipped, so a long string
+    could be corrupted with zero signal.
+    """
     dev = _keyboard()
+    typed = 0
+    dropped_chars: list = []
     for ch in text:
         result = _char_to_key(ch)
         if result is None:
             if ch.isspace():
                 code, needs_shift = uinput.KEY_SPACE, False
             else:
-                continue  # unsupported character; skip
+                dropped_chars.append(ch)  # unsupported character; report it
+                continue
         else:
             code, needs_shift = result
         if needs_shift:
@@ -362,6 +373,50 @@ def type_text(text: str) -> None:
         dev.emit(code, 0); dev.syn(); time.sleep(0.006)
         if needs_shift:
             dev.emit(uinput.KEY_LEFTSHIFT, 0)
+        typed += 1
+    return {
+        "typed": typed,
+        "dropped": len(dropped_chars),
+        "dropped_chars": dropped_chars,
+        "requested": len(text),
+        "ok": typed > 0 or len(text) == 0,
+    }
+
+
+def paste(text: str) -> dict:
+    """Paste text into the focused widget via the Wayland clipboard + Ctrl+V.
+
+    Uses ``wl-copy`` to set the clipboard, then sends Ctrl+V through the
+    virtual keyboard. This is far more reliable and much faster than
+    char-by-char typing for long text (any unsupported character is preserved
+    verbatim via the clipboard, and a single keystroke replaces thousands).
+    Returns the clipboard length and delivery status.
+
+    ``wl-copy`` keeps running to serve the clipboard until a reader consumes
+    it, so we spawn it non-blocking (Popen) and do NOT wait for it to exit:
+    waiting would deadlock if the Ctrl+V doesn't land (which happens when the
+    target widget lacks real input focus). We give it a moment to own the
+    clipboard, then send Ctrl+V.
+    """
+    import subprocess
+    from ._env import base_env
+
+    try:
+        proc = subprocess.Popen(
+            ["wl-copy"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, env=base_env(),
+        )
+        proc.stdin.write(text.encode("utf-8"))
+        proc.stdin.close()
+    except FileNotFoundError:
+        return {"ok": False, "error": "wl-clipboard (wl-copy) is not installed"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"wl-copy error: {exc}"}
+
+    # Give the clipboard a moment to be owned, then paste.
+    time.sleep(0.3)
+    press_key("v", modifiers=["ctrl"])
+    return {"ok": True, "chars": len(text), "method": "wl-copy + Ctrl+V"}
 
 
 def press_key(key: str, modifiers: Optional[list] = None) -> None:

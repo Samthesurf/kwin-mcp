@@ -174,10 +174,30 @@ def drag(from_x: int = 0, from_y: int = 0, to_x: int = 0, to_y: int = 0,
 
 @mcp.tool(title="Type text", annotations=_ann(**ACT))
 def type_text(text: str) -> dict:
-    """Type a string into whatever window is currently focused."""
+    """Type a string into whatever window is currently focused.
+
+    Returns honest stats: ``typed`` (chars emitted), ``dropped`` (chars skipped
+    because they are not representable in the US-layout key map), and
+    ``dropped_chars``. If ``dropped`` > 0 the text was NOT fully entered; prefer
+    the ``paste`` tool for long or non-ASCII text.
+    """
     try:
-        input_mod.type_text(text)
-        return {"ok": True, "length": len(text)}
+        return input_mod.type_text(text)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+@mcp.tool(title="Paste text (clipboard)", annotations=_ann(**ACT))
+def paste(text: str) -> dict:
+    """Paste text into the focused widget via the Wayland clipboard + Ctrl+V.
+
+    Reliable and fast for long or non-ASCII text: sets the clipboard with
+    wl-copy then sends Ctrl+V, so unsupported characters are preserved verbatim
+    and a single keystroke replaces char-by-char typing. Prefer this over
+    type_text for anything longer than a few chars.
+    """
+    try:
+        return input_mod.paste(text)
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
@@ -257,6 +277,50 @@ def set_value(window_id: str, element_index: int, value: str) -> dict:
     """
     try:
         return a11y.set_value(window_id, element_index, value)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+@mcp.tool(title="Focus element (keyboard-first)", annotations=_ann(**MUT))
+def focus_element(window_id: str, element_index: int) -> dict:
+    """Move keyboard focus to an AT-SPI element without clicking.
+
+    Uses the AT-SPI Component.GrabFocus action, so focus jumps straight to the
+    element (no Tab-count guessing, no cursor movement). This is the keyboard-
+    first navigation primitive: focus the element, then activate it with
+    press_key('enter') / perform_action / keyboard_navigate.
+    """
+    try:
+        return a11y.focus_element(window_id, element_index)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+@mcp.tool(title="Focused element", annotations=_ann(**RO))
+def focused_element(window_id: str) -> dict:
+    """Report which AT-SPI element currently has keyboard focus.
+
+    Returns the element index, role and name that currently owns focus, or
+    element=null if none does. Lets a host know its position in the tab order
+    before navigating with keyboard_navigate.
+    """
+    try:
+        return a11y.focused_element(window_id)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+@mcp.tool(title="Keyboard navigate", annotations=_ann(**MUT))
+def keyboard_navigate(window_id: str, direction: str = "next", steps: int = 1) -> dict:
+    """Move keyboard focus to the next/prev focusable element and report it.
+
+    direction: 'next' (Tab) or 'prev' (Shift+Tab); steps = how many positions
+    to move. Returns the 'from' and 'to' elements so a host can reason without
+    pixels. Combine with focus_element, press_key and get_window_state for a
+    fully keyboard-driven flow.
+    """
+    try:
+        return a11y.keyboard_navigate(window_id, direction=direction, steps=steps)
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 

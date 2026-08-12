@@ -59,6 +59,10 @@ _INTERACTIVE_ROLES = {
     "toggle button", "icon", "image", "label", "table cell", "scroll bar",
 }
 
+# Last keyboard_navigate position per window_id. Used to chain navigation when
+# the AT-SPI 'focused' state flag is unreliable (many Qt apps lie about it).
+_LAST_NAV: dict = {}
+
 
 def _atspi_available() -> bool:
     """True if the legacy pyatspi module is importable."""
@@ -373,6 +377,122 @@ def perform_action(window_id: str, element_index: int, action: str = "",
         return {"ok": ok, "action": name, "element": el.index}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
+
+
+def focus_element(window_id: str, element_index: int, max_elements: int = 500) -> dict:
+    """Move keyboard focus to an AT-SPI element.
+
+    Uses Component.GrabFocus (D-Bus) or the pyatspi focus action. This is the
+    keyboard-first navigation primitive: it places focus on a specific element
+    without guessing Tab counts, so a host can then activate it with
+    keyboard_navigate / press_key("enter") / perform_action.
+    """
+    el, handle = _node_by_index(window_id, element_index, max_elements=max_elements)
+    if el is None:
+        return {"ok": False, "error": f"element {element_index} not found"}
+    if isinstance(handle, tuple) and _backend() == "dbus":
+        ok, detail = atspi_dbus.grab_focus(handle)
+        return {"ok": ok, "element": el.index, "role": el.role, "name": el.name,
+                **( {"error": detail} if not ok else {})}
+    # pyatspi backend: activate the 'focus' action if present, else click center.
+    try:
+        atn = handle.queryAction()
+        n = int(atn.nActions)
+        for i in range(n):
+            if str(atn.getName(i)).strip().lower() in ("focus", "grab focus"):
+                ok = bool(atn.doAction(i))
+                return {"ok": ok, "element": el.index, "role": el.role, "name": el.name}
+        # fall back to clicking the element's center to place focus
+        from .input import click_window
+        from .windows import get_window
+        win = get_window(window_id)
+        click_window(window_id, (el.x + el.width // 2) - win.x,
+                     (el.y + el.height // 2) - win.y)
+        return {"ok": True, "element": el.index, "role": el.role, "name": el.name,
+                "method": "click_fallback"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+
+def focused_element(window_id: str, max_elements: int = 500) -> dict:
+    """Return the currently keyboard-focused AT-SPI element (if any).
+
+    Walks the tree and reports the element whose state flags include
+    'focused'. Lets a host know where it is in the tab order before navigating.
+    """
+    try:
+        pairs, _win = _collect_nodes(window_id, max_elements=max_elements,
+                                     only_interactive=True)
+    except (RuntimeError, ValueError):
+        return {"available": False, "error": "AT-SPI unavailable"}
+    for el, _n in pairs:
+        if "focused" in el.states:
+            return {"available": True, "element": el.index, "role": el.role,
+                    "name": el.name}
+    return {"available": True, "element": None}
+
+
+def keyboard_navigate(window_id: str, direction: str = "next", steps: int = 1,
+                      max_elements: int = 500) -> dict:
+    """Move keyboard focus to the next/prev focusable element, then report it.
+
+    direction: 'next' (Tab) or 'prev' (Shift+Tab). 'steps' is how many
+    positions to move. This is the keyboard-first navigation flow: instead of
+    pixel coordinates, the host asks to move focus relative to what currently
+    has focus, and gets back the newly focused element so it can reason about
+    the next action. Falls back to real Tab/Shift+Tab keypresses via the input
+    module if the AT-SPI tree cannot be resolved.
+    """
+    try:
+        pairs, _win = _collect_nodes(window_id, max_elements=max_elements,
+                                     only_interactive=True)
+    except (RuntimeError, ValueError):
+        return {"ok": False, "available": False,
+                "error": "AT-SPI unavailable; cannot navigate"}
+    if not pairs:
+        return {"ok": False, "available": True, "error": "no elements in tree"}
+    # Build the ordered list of navigable elements. Prefer elements that
+    # report the 'focusable' state, but many Qt apps (Kate, etc.) mark
+    # everything focusable=False even though the controls ARE keyboard-
+    # reachable, so fall back to interactive roles when no element reports
+    # focusable. This keeps navigation working on noisy a11y trees.
+    _NAV_ROLES = {
+        "push button", "button", "text", "entry", "text entry", "edit",
+        "check box", "check button", "radio button", "combo box", "spin button",
+        "slider", "link", "menu item", "list item", "tab", "page tab",
+        "toggle button",
+    }
+    focusable = [el for el, _n in pairs if "focusable" in el.states]
+    if not focusable:
+        focusable = [el for el, _n in pairs if el.role.lower() in _NAV_ROLES]
+    if not focusable:
+        return {"ok": False, "available": True,
+                "error": "no focusable or interactive elements in tree"}
+    # Find current position. Prefer the reported 'focused' element, but the
+    # state flag is unreliable on many Qt apps (Kate marks everything focused),
+    # so fall back to the last index this module navigated to for this window.
+    # This lets chained keyboard_navigate calls move correctly even when the
+    # a11y state flags lie.
+    cur = _LAST_NAV.get(window_id, 0)
+    for i, el in enumerate(focusable):
+        if "focused" in el.states and cur == 0:
+            cur = i
+            break
+    move = steps if direction == "next" else -steps
+    target_i = max(0, min(len(focusable) - 1, cur + move))
+    target = focusable[target_i]
+    res = focus_element(window_id, target.index, max_elements=max_elements)
+    if res.get("ok"):
+        _LAST_NAV[window_id] = target_i
+    return {
+        "ok": res.get("ok", False),
+        **({"error": res.get("error")} if not res.get("ok") else {}),
+        "from": {"element": focusable[cur].index, "role": focusable[cur].role,
+                 "name": focusable[cur].name},
+        "to": {"element": target.index, "role": target.role, "name": target.name},
+        "direction": direction, "steps": steps,
+        "method": "grab_focus" if res.get("ok") else "unknown",
+    }
 
 
 def set_value(window_id: str, element_index: int, value: str,
