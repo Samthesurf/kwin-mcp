@@ -1,33 +1,32 @@
 #!/usr/bin/env bash
-# Build kwin-mcp and publish it to PyPI.
+# Build kwin-mcp-server and publish it to PyPI.
 #
-# Requires a PyPI API token. Provide it one of two ways:
-#   1. ~/.pypirc  (twine's standard config) - example:
+# Credentials - provide a PyPI API token one of two ways:
+#   1. ~/.pypirc  (twine's standard config), e.g.
 #        [pypi]
 #        username = __token__
-#        password = pypi-AgEIcHlwaS5vcmc...
-#   2. $PYPI_TOKEN (shell env var) - the script writes a temp .pypirc from it.
+#        password = pypi-AgEI...
+#   2. $PYPI_TOKEN (shell env var) - this script writes a temp .pypirc from it.
 #
 # Usage:
 #   ./scripts/publish.sh            # build + upload to PyPI
 #   ./scripts/publish.sh --testpypi # build + upload to Test PyPI first
 #
-# After the first successful release, publish is just:
-#   git tag v0.2.0 && git push --tags
-# (the GitHub Actions workflow in .github/workflows/release.yml also publishes
-#  via a trusted-publisher build when the repo is configured for it).
+# Set PYTHON to a python that has `build` and `twine` installed if they are not
+# on the default python3 (e.g. PYTHON=.venv/bin/python).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PYBIN="${PYTHON:-$(command -v python3)}"
+
 echo ">> Building sdist + wheel..."
 rm -rf build dist
 "$PYBIN" -m build
 
 if [ "${1:-}" = "--testpypi" ]; then
-  REPO="testpypi"; REPO_URL="https://test.pypi.org/legacy/"
+  REPO="testpypi"
 else
-  REPO="pypi"; REPO_URL="https://upload.pypi.org/legacy/"
+  REPO="pypi"
 fi
 
 PYPIRC_TMP=""
@@ -47,13 +46,12 @@ fi
 
 echo ">> Uploading to ${REPO}..."
 if [ -n "$PYPIRC_TMP" ]; then
-  "$PYBIN" -m twine upload --config-file "$PYPIRC_TMP" --repository "$REPO" \
-      --repository-url "$REPO_URL" dist/*
+  "$PYBIN" -m twine upload --config-file "$PYPIRC_TMP" --repository "$REPO" dist/*
   rm -f "$PYPIRC_TMP"
 else
-  "$PYBIN" -m twine upload --repository "$REPO" --repository-url "$REPO_URL" dist/*
+  "$PYBIN" -m twine upload --repository "$REPO" dist/*
 fi
 
 echo
 echo "Done. Install it anywhere with:"
-echo "  pipx install $REPO_URL  # or once on PyPI:  pipx install kwin-mcp-server"
+echo "  pipx install kwin-mcp-server"

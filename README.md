@@ -54,8 +54,8 @@ You can also install the Python package directly and run it yourself, e.g.:
   kwin-mcp              # start the stdio MCP server
   ```
 
-> **Prefer pip/pipx?** kwin-mcp is published to PyPI as `kwin-mcp-server`. Once
-> released there, install is a single command with no git clone:
+> **Prefer pip/pipx?** kwin-mcp is live on PyPI as `kwin-mcp-server`. Install
+> it in one command, no git clone, no build:
 >
 >   ```bash
 >   pipx install kwin-mcp-server        # or: uv tool install kwin-mcp-server
