@@ -15,55 +15,57 @@ X11: window listing, screenshots, clicks, typing, dragging, key presses, and
 
 ---
 
-## Install (about 3 minutes)
+## Install
 
 kwin-mcp targets **KDE Plasma on Wayland**. It is a Python MCP server, so any
 MCP host (Claude Code, Codex, Cursor, Zed, Hermes) can use it.
 
-1. **System deps + input permission** (one-time)
-   ```bash
-   sudo pacman -S kdotool spectacle                 # Arch
-   sudo usermod -aG input "$USER"                   # allow /dev/uinput
-   # log out and back in so the new group applies
-   ```
-   Not on Arch? See the Dependencies table below for the per-distro package
-   names.
+### One command (recommended)
 
-2. **Install uv** (once) - powers the one-command launcher
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
+`kwin-mcp-server` is published to PyPI, so install is a single command with no
+git clone and no build:
 
-3. **Wire it into your agent**
-   ```bash
-   git clone https://github.com/Samthesurf/kwin-mcp.git /tmp/kwin-mcp && cd /tmp/kwin-mcp
-   ./setup.sh hermes     # or: claude | codex | cursor | zed
-   ```
-   `setup.sh` runs a preflight, prints exactly what is missing if anything is
-   (and stops, never half-wiring), then adds the server to your agent's config.
-   Restart the agent and you are done. To be sure it launches the real server
-   (uv + build + deps + live window listing), run `./setup.sh verify` and read
-   the readiness report. `./setup.sh help` prints usage; `./setup.sh check`
-   just runs the preflight without wiring anything.
+```bash
+pipx install kwin-mcp-server        # or: uv tool install kwin-mcp-server
+kwin-mcp --doctor                    # print the readiness report
+kwin-mcp                              # start the stdio MCP server
+```
 
-You can also install the Python package directly and run it yourself, e.g.:
+Then give it system access and wire it into your agent (both shown below).
 
-  ```bash
-  uv tool install --from git+https://github.com/Samthesurf/kwin-mcp kwin-mcp
-  kwin-mcp --doctor     # print the readiness report
-  kwin-mcp              # start the stdio MCP server
-  ```
+### System deps + input permission (one-time)
 
-> **Prefer pip/pipx?** kwin-mcp is live on PyPI as `kwin-mcp-server`. Install
-> it in one command, no git clone, no build:
->
->   ```bash
->   pipx install kwin-mcp-server        # or: uv tool install kwin-mcp-server
->   kwin-mcp --doctor                    # print the readiness report
->   ```
->
-> To build + upload a release yourself, run `./scripts/publish.sh` (see that
-> script for the PyPI token / TestPyPI options).
+```bash
+sudo pacman -S kdotool spectacle                 # Arch
+sudo usermod -aG input "$USER"                   # allow /dev/uinput
+# log out and back in so the new group applies
+```
+
+Not on Arch? See the Dependencies table below for the per-distro package names.
+
+### Wire it into your agent
+
+Any MCP host can point at the `kwin-mcp` command. Use setup.sh for the
+convenience of auto-wiring your agent's config (it preflights, prints exactly
+what is missing, and never half-wires):
+
+```bash
+git clone https://github.com/Samthesurf/kwin-mcp.git /tmp/kwin-mcp && cd /tmp/kwin-mcp
+./setup.sh hermes     # or: claude | codex | cursor | zed
+```
+
+Or wire it manually by running the `kwin-mcp` command in your agent's MCP
+config. `./setup.sh verify` launches the real server and confirms it reports
+ready; `./setup.sh help` prints usage; `./setup.sh check` runs only the
+preflight.
+
+### Manual run (no agent)
+
+```bash
+kwin-mcp              # stdio MCP server
+kwin-mcp --doctor     # readiness report
+kwin-mcp --check      # dependency preflight
+```
 
 ---
 
