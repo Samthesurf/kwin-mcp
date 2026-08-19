@@ -2,6 +2,7 @@
 real window, no real input). Requires a venv with the core deps installed."""
 import sys
 import types
+import pytest
 
 # ---- minimal pyatspi stand-in so tests run without the system lib ----
 STATE_CHECKED, STATE_FOCUSED, STATE_SELECTED, STATE_SHOWING = 1, 2, 3, 4

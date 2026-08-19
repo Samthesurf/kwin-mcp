@@ -94,6 +94,9 @@ kwin-mcp --check      # dependency preflight
 | `get_cursor_position` | Current pointer location |
 | `health` | Environment/dependency diagnostics |
 | `doctor` | One JSON readiness report (platform, windowing, input, AT-SPI, screenshot, portals, blockers) |
+| `history_status` | Computer History: is encrypted action-history capture on, and how much is stored? |
+| `history_query` | Computer History: bounded, metadata-only slice of past kwin-mcp actions |
+| `history_control` | Computer History: local enable/disable/pause/resume/flush/delete (user-owned) |
 
 Windows are identified by a stable KDE window UUID of the form
 `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}` (exactly what `kdotool` prints).
@@ -130,6 +133,48 @@ invoking a mutating tool:
 
 Annotations are safety hints, not an authorization system. Treat any call that
 could submit, delete, send, or purchase as requiring user approval.
+
+## Computer History
+
+A port of Cua Driver's encrypted, metadata-only **Computer History** preview
+(`libs/cua-driver/docs/computer-history-*.md`). It gives you a local, inspectable
+record of what kwin-mcp did, when, and which app it targeted, without turning the
+server into a screen recorder or keylogger.
+
+**Privacy boundary (permanent):** history records only fixed-field metadata. It
+never stores screenshots, typed text, clipboard contents, raw tool arguments or
+results, accessibility trees, window titles, URLs, or file paths. Every event is a
+CloudEvents 1.0 envelope on `urn:kwin-mcp:schema:history-event:v0`.
+
+**Encrypted at rest:** each event is sealed with AES-256-GCM before any bytes hit
+disk (no plaintext fallback). The key is a 256-bit in-memory secret; `delete`
+destroys the key and erases the store.
+
+**Opt-in, off by default.** Nothing is recorded until you enable it. Agents can
+only *read* history (`history_status`, `history_query`); capture lifecycle,
+retention, and deletion are owned locally (mirroring Cua's
+`history_control_requires_local_cli`).
+
+Enable it from the server process (e.g. via the `history_control` tool, or a
+local CLI), then let an agent query bounded slices:
+
+```json
+{ "tool": "history_control", "arguments": { "operation": "enable" } }
+{ "tool": "history_query",   "arguments": { "limit": 50, "since_sequence": 1 } }
+```
+
+| Tool | Purpose |
+|------|---------|
+| `history_status` | Read-only: supported, enabled, paused, encrypted, retention/quota, bytes used, dropped events, health. Never returns events. |
+| `history_query` | Read-only: a bounded, metadata-only event slice (`limit` 1..200, optional `session_id` / `since_sequence` / `until_sequence`). A successful read appends an encrypted access record (not returned). |
+| `history_control` | Local only: `enable` / `disable` / `pause` / `resume` / `flush` / `delete` the encrypted store. |
+
+Recorded events cover the 14 mutating/action tools (`click`, `drag`, `type_text`,
+`paste`, `press_key`, `scroll`, `click_element`, `perform_action`, `set_value`,
+`focus_element`, `activate`, `raise_window`, `minimize`, `close_window`) as
+`action_started` / `action_completed` envelopes, classified by effect
+(confirmed, partial, unverifiable, suspected_noop, refused, failed) and route
+(synthetic_events, trusted_input, global_input, accessibility, system_api).
 
 ## Dependencies
 

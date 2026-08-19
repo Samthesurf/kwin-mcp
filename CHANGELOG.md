@@ -2,6 +2,37 @@
 
 All notable changes to kwin-mcp.
 
+## [0.4.0] - 2026-08-19
+
+### Added
+- **Computer History** (port of Cua Driver's encrypted, metadata-only action
+  history): an opt-in, off-by-default local record of what kwin-mcp did.
+  - `history_status` (read-only): reports supported, enabled, paused, encrypted,
+    retention/quota, bytes used, dropped events, and health. Never returns events.
+  - `history_query` (read-only): bounded, metadata-only event slice (`limit`
+    1..200, optional `session_id` / `since_sequence` / `until_sequence`). A
+    successful read appends an encrypted access record that is not returned.
+  - `history_control` (local only): `enable` / `disable` / `pause` / `resume` /
+    `flush` / `delete` the encrypted store. Mirrors Cua's
+    `history_control_requires_local_cli` (agents read, the local user owns capture).
+  - Every event is a CloudEvents 1.0 envelope on
+    `urn:kwin-mcp:schema:history-event:v0`, sealed with AES-256-GCM before it
+    touches disk (no plaintext fallback). Records only fixed-field metadata: no
+    screenshots, typed text, clipboard, raw tool args/results, a11y trees, window
+    titles, URLs, or paths.
+  - The 14 mutating/action tools (`click`, `drag`, `type_text`, `paste`,
+    `press_key`, `scroll`, `click_element`, `perform_action`, `set_value`,
+    `focus_element`, `activate`, `raise_window`, `minimize`, `close_window`) are
+    wrapped so an `action_started` / `action_completed` pair is recorded (effect +
+    route), nonblocking and never failing the action itself.
+- **`cryptography` dependency** for AES-256-GCM at rest.
+
+### Added (tests)
+- `tests/test_history.py`: 14 tests mirroring Cua's computer-history contract
+  (status/query contracts, the hard privacy boundary via `assert_no_private_fields`,
+  encryption-at-rest with no plaintext on disk, bounded query limits/ordering,
+  pause/resume/delete lifecycle, and decorator signature preservation).
+
 ## [0.3.0] - 2026-08-12
 
 ### Added

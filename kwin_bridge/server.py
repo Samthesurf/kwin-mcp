@@ -21,6 +21,7 @@ import logging
 import os
 import sys
 import traceback
+from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations as _TA
@@ -30,6 +31,7 @@ from mcp.types import ToolAnnotations as _TA
 logging.getLogger("mcp").setLevel(logging.WARNING)
 
 from . import windows, screenshot, input as input_mod, a11y, _env, doctor  # noqa: F401
+from . import history  # noqa: F401  # encrypted, metadata-only Computer History
 
 
 def _ann(*, read_only: bool = False, destructive: bool = False,
@@ -122,6 +124,7 @@ def capture(mode: str = "desktop", window_id: str = "", output_path: str = "") -
         return {"error": str(exc), "trace": traceback.format_exc()}
 
 
+@history.record("click", route="synthetic_events")
 @mcp.tool(title="Click", annotations=_ann(**ACT))
 def click(x: int = 0, y: int = 0, window_id: str = "", button: str = "left",
           double: bool = False, element_index: int = -1,
@@ -153,6 +156,7 @@ def click(x: int = 0, y: int = 0, window_id: str = "", button: str = "left",
         return {"error": str(exc)}
 
 
+@history.record("drag", route="synthetic_events")
 @mcp.tool(title="Drag", annotations=_ann(**ACT))
 def drag(from_x: int = 0, from_y: int = 0, to_x: int = 0, to_y: int = 0,
          window_id: str = "", button: str = "left", steps: int = 20) -> dict:
@@ -172,6 +176,7 @@ def drag(from_x: int = 0, from_y: int = 0, to_x: int = 0, to_y: int = 0,
         return {"error": str(exc)}
 
 
+@history.record("type_text", route="trusted_input")
 @mcp.tool(title="Type text", annotations=_ann(**ACT))
 def type_text(text: str) -> dict:
     """Type a string into whatever window is currently focused.
@@ -187,6 +192,7 @@ def type_text(text: str) -> dict:
         return {"error": str(exc)}
 
 
+@history.record("paste", route="trusted_input")
 @mcp.tool(title="Paste text (clipboard)", annotations=_ann(**ACT))
 def paste(text: str) -> dict:
     """Paste text into the focused widget via the Wayland clipboard + Ctrl+V.
@@ -202,6 +208,7 @@ def paste(text: str) -> dict:
         return {"error": str(exc)}
 
 
+@history.record("press_key", route="global_input")
 @mcp.tool(title="Press key", annotations=_ann(**ACT))
 def press_key(key: str, modifiers: list = None) -> dict:
     """Press a single key, optionally with held modifiers.
@@ -215,6 +222,7 @@ def press_key(key: str, modifiers: list = None) -> dict:
         return {"error": str(exc)}
 
 
+@history.record("scroll", route="synthetic_events")
 @mcp.tool(title="Scroll", annotations=_ann(**MUT))
 def scroll(direction: str = "down", amount: int = 3) -> dict:
     """Scroll the mouse wheel. direction: 'up' or 'down'."""
@@ -241,6 +249,7 @@ def get_window_state(window_id: str, max_elements: int = 100) -> dict:
         return {"error": str(exc)}
 
 
+@history.record("click_element", route="accessibility")
 @mcp.tool(title="Click element (by index)", annotations=_ann(**ACT))
 def click_element(window_id: str, element_index: int, button: str = "left",
                   double: bool = False) -> dict:
@@ -252,6 +261,7 @@ def click_element(window_id: str, element_index: int, button: str = "left",
         return {"error": str(exc)}
 
 
+@history.record("perform_action", route="accessibility")
 @mcp.tool(title="Perform AT-SPI action", annotations=_ann(**ACT))
 def perform_action(window_id: str, element_index: int, action: str = "") -> dict:
     """Invoke an AT-SPI action on an element.
@@ -267,6 +277,7 @@ def perform_action(window_id: str, element_index: int, action: str = "") -> dict
         return {"error": str(exc)}
 
 
+@history.record("set_value", route="accessibility")
 @mcp.tool(title="Set value on element", annotations=_ann(**ACT))
 def set_value(window_id: str, element_index: int, value: str) -> dict:
     """Write a value to a settable AT-SPI element.
@@ -281,6 +292,7 @@ def set_value(window_id: str, element_index: int, value: str) -> dict:
         return {"error": str(exc)}
 
 
+@history.record("focus_element", route="accessibility")
 @mcp.tool(title="Focus element (keyboard-first)", annotations=_ann(**MUT))
 def focus_element(window_id: str, element_index: int) -> dict:
     """Move keyboard focus to an AT-SPI element without clicking.
@@ -325,6 +337,7 @@ def keyboard_navigate(window_id: str, direction: str = "next", steps: int = 1) -
         return {"error": str(exc)}
 
 
+@history.record("activate", route="system_api")
 @mcp.tool(title="Raise and focus window", annotations=_ann(**MUT))
 def activate(window_id: str) -> dict:
     """Raise and focus a window (switching virtual desktop if needed)."""
@@ -335,6 +348,7 @@ def activate(window_id: str) -> dict:
         return {"error": str(exc)}
 
 
+@history.record("raise_window", route="system_api")
 @mcp.tool(title="Raise window", annotations=_ann(**MUT))
 def raise_window(window_id: str) -> dict:
     """Raise a window to the top of the stacking order."""
@@ -345,6 +359,7 @@ def raise_window(window_id: str) -> dict:
         return {"error": str(exc)}
 
 
+@history.record("minimize", route="system_api")
 @mcp.tool(title="Minimize window", annotations=_ann(**MUT))
 def minimize(window_id: str) -> dict:
     """Minimize a window."""
@@ -355,6 +370,7 @@ def minimize(window_id: str) -> dict:
         return {"error": str(exc)}
 
 
+@history.record("close_window", route="system_api")
 @mcp.tool(title="Close window", annotations=_ann(**ACT))
 def close_window(window_id: str) -> dict:
     """Close a window."""
@@ -389,6 +405,93 @@ def health() -> dict:
         "display_server": _display_server(),
     }
     return status
+
+
+# ── Computer History (port of Cua Driver's encrypted metadata-only history) ──
+def _app_from_window_id(_result: dict, kwargs: dict) -> Optional[str]:
+    """Best-effort non-sensitive application display name from a window_id.
+
+    Never returns a window title or path, only the KDE window class. Returns
+    None on miss so the event stays metadata-only.
+    """
+    wid = kwargs.get("window_id")
+    if not wid:
+        return None
+    try:
+        w = windows.get_window(wid)
+        return w.app_name or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@mcp.tool(title="Computer History status", annotations=_ann(read_only=True))
+def history_status() -> dict:
+    """Inspect Computer History (the opt-in, encrypted, metadata-only record of
+    kwin-mcp actions). Read-only. Reports supported, enabled, paused, encrypted,
+    retention/quota, bytes used, dropped events, and health. Never returns events.
+
+    History is OFF by default. To record, the local user enables it via the
+    `history_control` tool from this server process (agents cannot enable it).
+    """
+    return history.status()
+
+
+@mcp.tool(title="Computer History query", annotations=_ann(read_only=True))
+def history_query(limit: int = 50, session_id: str = "",
+                  since_sequence: int = 0, until_sequence: int = 0) -> dict:
+    """Return a bounded, metadata-only slice of Computer History events.
+
+    Read-only and permission-gated to the kwin_runtime agent. Never includes
+    screenshots, typed text, clipboard, tool arguments, tool results, a11y
+    trees, window titles, or paths. A successful non-empty query appends an
+    encrypted access record (not returned). A returned event is metadata
+    evidence, not a transcript.
+
+    limit: 1..200 (default 50). session_id: opaque id from history. since_sequence
+    / until_sequence: inclusive sequence bounds (0 = unbounded). Events are
+    ordered by sequence and the newest `limit` are returned in ascending order.
+    """
+    try:
+        return history.query(
+            limit=limit,
+            session_id=session_id or None,
+            since_sequence=since_sequence or None,
+            until_sequence=until_sequence or None,
+        )
+    except history.HistoryError as exc:
+        return {"error": exc.category, "metadata_only": True,
+                "model_context_disclosure": True}
+
+
+@mcp.tool(title="Computer History control (local)", annotations=_ann(read_only=True))
+def history_control(operation: str = "status") -> dict:
+    """Local, server-side control of Computer History capture lifecycle.
+
+    This mirrors Cua's `history_control_requires_local_cli`: capture, retention,
+    and deletion are owned by the local user on this machine, NOT by a remote
+    agent. It is exposed as an MCP tool for convenience (the server process is
+    trusted local), but an agent calling it only flips the local daemon's own
+    state; it cannot read the encryption key or the encrypted chunks.
+
+    operation: enable | disable | pause | resume | flush | delete.
+      enable  - create the encrypted store + in-memory key, start the writer.
+      disable - stop recording new actions (encrypted history is preserved).
+      pause   - pause new-action capture (existing history stays queryable).
+      resume  - resume capture.
+      flush   - drop buffered-but-unwritten events (keep the encrypted store).
+      delete  - cryptographic deletion: destroy the key and erase the store.
+
+    Default root: $XDG_STATE_HOME/kwin-mcp/computer-history.
+    """
+    op = operation.strip().lower()
+    if op not in ("enable", "disable", "pause", "resume", "flush", "delete", "status"):
+        return {"ok": False, "error": f"unknown operation {operation!r}"}
+    if op == "status":
+        return history.status()
+    try:
+        return history.control(op)
+    except history.HistoryError as exc:
+        return {"ok": False, "error": exc.category}
 
 
 @mcp.tool(title="Readiness report (doctor)", annotations=_ann(**RO))

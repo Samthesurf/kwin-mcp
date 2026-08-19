@@ -1,6 +1,6 @@
 [project]
 name = "kwin-mcp-server"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server that controls native Wayland windows on KDE Plasma (the cua-driver X11 gap, solved). Includes a doctor readiness report, semantic AT-SPI targeting, and an MCP safety contract."
 readme = "README.md"
 license = "MIT"
@@ -22,6 +22,7 @@ dependencies = [
     "python-uinput>=1.0.1",
     "Pillow>=10.0.0",
     "jeepney>=0.8.0",
+    "cryptography>=42.0.0",   # AES-256-GCM at rest for Computer History
 ]
 
 [project.optional-dependencies]
