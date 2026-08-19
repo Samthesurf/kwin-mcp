@@ -124,8 +124,8 @@ def capture(mode: str = "desktop", window_id: str = "", output_path: str = "") -
         return {"error": str(exc), "trace": traceback.format_exc()}
 
 
-@history.record("click", route="synthetic_events")
 @mcp.tool(title="Click", annotations=_ann(**ACT))
+@history.record("click", route="synthetic_events")
 def click(x: int = 0, y: int = 0, window_id: str = "", button: str = "left",
           double: bool = False, element_index: int = -1,
           role: str = "", name: str = "", text: str = "") -> dict:
@@ -156,8 +156,8 @@ def click(x: int = 0, y: int = 0, window_id: str = "", button: str = "left",
         return {"error": str(exc)}
 
 
-@history.record("drag", route="synthetic_events")
 @mcp.tool(title="Drag", annotations=_ann(**ACT))
+@history.record("drag", route="synthetic_events")
 def drag(from_x: int = 0, from_y: int = 0, to_x: int = 0, to_y: int = 0,
          window_id: str = "", button: str = "left", steps: int = 20) -> dict:
     """Drag from one point to another.
@@ -176,8 +176,8 @@ def drag(from_x: int = 0, from_y: int = 0, to_x: int = 0, to_y: int = 0,
         return {"error": str(exc)}
 
 
-@history.record("type_text", route="trusted_input")
 @mcp.tool(title="Type text", annotations=_ann(**ACT))
+@history.record("type_text", route="trusted_input")
 def type_text(text: str) -> dict:
     """Type a string into whatever window is currently focused.
 
@@ -192,8 +192,8 @@ def type_text(text: str) -> dict:
         return {"error": str(exc)}
 
 
-@history.record("paste", route="trusted_input")
 @mcp.tool(title="Paste text (clipboard)", annotations=_ann(**ACT))
+@history.record("paste", route="trusted_input")
 def paste(text: str) -> dict:
     """Paste text into the focused widget via the Wayland clipboard + Ctrl+V.
 
@@ -208,8 +208,8 @@ def paste(text: str) -> dict:
         return {"error": str(exc)}
 
 
-@history.record("press_key", route="global_input")
 @mcp.tool(title="Press key", annotations=_ann(**ACT))
+@history.record("press_key", route="global_input")
 def press_key(key: str, modifiers: list = None) -> dict:
     """Press a single key, optionally with held modifiers.
 
@@ -222,8 +222,8 @@ def press_key(key: str, modifiers: list = None) -> dict:
         return {"error": str(exc)}
 
 
-@history.record("scroll", route="synthetic_events")
 @mcp.tool(title="Scroll", annotations=_ann(**MUT))
+@history.record("scroll", route="synthetic_events")
 def scroll(direction: str = "down", amount: int = 3) -> dict:
     """Scroll the mouse wheel. direction: 'up' or 'down'."""
     try:
@@ -249,8 +249,8 @@ def get_window_state(window_id: str, max_elements: int = 100) -> dict:
         return {"error": str(exc)}
 
 
-@history.record("click_element", route="accessibility")
 @mcp.tool(title="Click element (by index)", annotations=_ann(**ACT))
+@history.record("click_element", route="accessibility")
 def click_element(window_id: str, element_index: int, button: str = "left",
                   double: bool = False) -> dict:
     """Click an AT-SPI element (by index from get_window_state) in a window."""
@@ -261,8 +261,8 @@ def click_element(window_id: str, element_index: int, button: str = "left",
         return {"error": str(exc)}
 
 
-@history.record("perform_action", route="accessibility")
 @mcp.tool(title="Perform AT-SPI action", annotations=_ann(**ACT))
+@history.record("perform_action", route="accessibility")
 def perform_action(window_id: str, element_index: int, action: str = "") -> dict:
     """Invoke an AT-SPI action on an element.
 
@@ -277,8 +277,8 @@ def perform_action(window_id: str, element_index: int, action: str = "") -> dict
         return {"error": str(exc)}
 
 
-@history.record("set_value", route="accessibility")
 @mcp.tool(title="Set value on element", annotations=_ann(**ACT))
+@history.record("set_value", route="accessibility")
 def set_value(window_id: str, element_index: int, value: str) -> dict:
     """Write a value to a settable AT-SPI element.
 
@@ -292,8 +292,8 @@ def set_value(window_id: str, element_index: int, value: str) -> dict:
         return {"error": str(exc)}
 
 
-@history.record("focus_element", route="accessibility")
 @mcp.tool(title="Focus element (keyboard-first)", annotations=_ann(**MUT))
+@history.record("focus_element", route="accessibility")
 def focus_element(window_id: str, element_index: int) -> dict:
     """Move keyboard focus to an AT-SPI element without clicking.
 
@@ -337,8 +337,8 @@ def keyboard_navigate(window_id: str, direction: str = "next", steps: int = 1) -
         return {"error": str(exc)}
 
 
-@history.record("activate", route="system_api")
 @mcp.tool(title="Raise and focus window", annotations=_ann(**MUT))
+@history.record("activate", route="system_api")
 def activate(window_id: str) -> dict:
     """Raise and focus a window (switching virtual desktop if needed)."""
     try:
@@ -348,8 +348,8 @@ def activate(window_id: str) -> dict:
         return {"error": str(exc)}
 
 
-@history.record("raise_window", route="system_api")
 @mcp.tool(title="Raise window", annotations=_ann(**MUT))
+@history.record("raise_window", route="system_api")
 def raise_window(window_id: str) -> dict:
     """Raise a window to the top of the stacking order."""
     try:
@@ -359,8 +359,8 @@ def raise_window(window_id: str) -> dict:
         return {"error": str(exc)}
 
 
-@history.record("minimize", route="system_api")
 @mcp.tool(title="Minimize window", annotations=_ann(**MUT))
+@history.record("minimize", route="system_api")
 def minimize(window_id: str) -> dict:
     """Minimize a window."""
     try:
@@ -370,8 +370,8 @@ def minimize(window_id: str) -> dict:
         return {"error": str(exc)}
 
 
-@history.record("close_window", route="system_api")
 @mcp.tool(title="Close window", annotations=_ann(**ACT))
+@history.record("close_window", route="system_api")
 def close_window(window_id: str) -> dict:
     """Close a window."""
     try:
