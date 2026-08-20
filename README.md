@@ -17,23 +17,46 @@ X11: window listing, screenshots, clicks, typing, dragging, key presses, and
 
 ## Install
 
-kwin-mcp targets **KDE Plasma on Wayland**. It is a Python MCP server, so any
-MCP host (Claude Code, Codex, Cursor, Zed, Hermes) can use it.
+kwin-mcp targets **KDE Plasma on Wayland**. Two paths, pick one:
 
-### One command (recommended)
+### Path A - Standalone CLI via pip (recommended for manual use)
 
-`kwin-mcp-server` is published to PyPI, so install is a single command with no
-git clone and no build:
+You get the `kwin-mcp` command globally. No clone, no venv:
 
 ```bash
 pipx install kwin-mcp-server        # or: uv tool install kwin-mcp-server
-kwin-mcp --doctor                    # print the readiness report
-kwin-mcp                              # start the stdio MCP server
+kwin-mcp --doctor                    # readiness report
+kwin-mcp                             # stdio MCP server
 ```
 
-Then give it system access and wire it into your agent (both shown below).
+Then wire it into any agent with one command (still no clone):
 
-### System deps + input permission (one-time)
+```bash
+kwin-mcp setup hermes      # or: claude | codex | cursor | vscode | opencode | openclaw | antigravity | pi | zed | windsurf
+kwin-mcp setup list        # show all supported agents
+kwin-mcp setup check       # preflight only, no wiring
+kwin-mcp setup verify      # preflight + confirm the real server starts and reports ready
+```
+
+### Path B - Agent wiring without a pip install (curl / uvx)
+
+If you have not installed the package, the agent can fetch it on first launch via `uvx` (like `npx`). No clone still:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Samthesurf/kwin-mcp/main/setup.sh | bash -s hermes
+# or, if you have uv installed locally:
+uvx --from git+https://github.com/Samthesurf/kwin-mcp kwin-mcp setup hermes --uvx
+```
+
+Both paths run a preflight first. If a system dep is missing it prints
+the exact install command and stops, so you never get a half-wired config.
+
+> Do not do both. Path A installs the `kwin-mcp` binary and wires it as
+> `command: kwin-mcp`. Path B wires it as `uvx --from git+... kwin-mcp`.
+> If you already did `pipx install`, just use `kwin-mcp setup`; no `uvx` or
+> `git clone` is needed.
+
+### System deps (one-time, either path)
 
 ```bash
 sudo pacman -S kdotool spectacle                 # Arch
@@ -41,32 +64,7 @@ sudo usermod -aG input "$USER"                   # allow /dev/uinput
 # log out and back in so the new group applies
 ```
 
-Not on Arch? See the [Dependencies](#dependencies) table below for the
-per-distro package names.
-
-### Wire it into your agent
-
-Any MCP host can point at the `kwin-mcp` command. Use setup.sh for the
-convenience of auto-wiring your agent's config (it preflights, prints exactly
-what is missing, and never half-wires):
-
-```bash
-git clone https://github.com/Samthesurf/kwin-mcp.git /tmp/kwin-mcp && cd /tmp/kwin-mcp
-./setup.sh hermes     # or: claude | codex | cursor | zed
-```
-
-Or wire it manually by running the `kwin-mcp` command in your agent's MCP
-config. `./setup.sh verify` launches the real server and confirms it reports
-ready; `./setup.sh help` prints usage; `./setup.sh check` runs only the
-preflight.
-
-### Manual run (no agent)
-
-```bash
-kwin-mcp              # stdio MCP server
-kwin-mcp --doctor     # readiness report
-kwin-mcp --check      # dependency preflight
-```
+Not on Arch? See the [Dependencies](#dependencies) table below.
 
 ---
 
@@ -247,49 +245,33 @@ python run.py
 python server.py --http 8080
 ```
 
-The smoothest path, however, is the one-command `uvx` setup described in the
-next section, which needs no local venv at all.
+The smoothest path is the one-command `kwin-mcp setup` described in `## Install` — no local venv needed.
 
-### Wiring into an MCP client (one command)
+### Wiring into an MCP client (what `kwin-mcp setup` does)
 
-The recommended way is `uvx`, the Python equivalent of `npx`: it downloads and
-runs the server on first use, then caches it. No clone, no venv, no manual
-install. After `uvx` runs once, the agent just launches
-`uvx --from git+https://github.com/Samthesurf/kwin-mcp kwin-mcp`.
-
-**Automatic (recommended):** run the setup script, which checks dependencies
-and injects the correct config into your agent.
-
-```bash
-git clone https://github.com/Samthesurf/kwin-mcp.git /tmp/kwin-mcp && cd /tmp/kwin-mcp
-./setup.sh hermes      # or: claude | codex | cursor | zed | check
-```
-
-`setup.sh` runs a preflight first. If a system dependency is missing it prints
-exactly what to install (e.g. `sudo pacman -S kdotool`) and stops, so you never
-end up with a half-wired, broken server. If all checks pass it writes the
-`uvx --from ... kwin-mcp` entry into the chosen agent's config.
-
-**Manual:** point the client at the `uvx` launcher. Example
-(`mcp-config.example.json`):
+`kwin-mcp setup <agent>` preflights, then injects the correct entry into
+your agent's config (and never half-wires). The manual equivalent is to
+point the client at the installed command:
 
 ```json
 {
   "mcpServers": {
-    "kwin-mcp": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/Samthesurf/kwin-mcp", "kwin-mcp"]
-    }
+    "kwin-mcp": { "command": "kwin-mcp", "args": [] }
   }
 }
 ```
 
-- **Hermes**: `./setup.sh hermes` writes it under `mcp_servers` in
-  `~/.hermes/config.yaml`, or paste the JSON there. Restart Hermes to load it.
-  This replaces `cua-driver` for the `computer_use` toolset on a Wayland box.
-- **Claude Code**: `claude mcp add kwin-mcp -- uvx --from git+https://github.com/Samthesurf/kwin-mcp kwin-mcp`
-- **Codex / Cursor / Zed**: `./setup.sh codex|cursor|zed`, or paste the JSON
-  into their MCP config file.
+If you used `--uvx` (no pip install), the wired entry is instead
+`{ "command": "uvx", "args": ["--from", "git+https://github.com/Samthesurf/kwin-mcp", "kwin-mcp"] }`.
+
+Supported agents: `hermes` (~/.hermes/config.yaml), `claude` (~/.claude.json),
+`codex` (~/.codex/config.toml), `cursor`, `vscode` (settings.json),
+`opencode` (~/.config/opencode/opencode.json), `openclaw`, `antigravity`,
+`pi`, `zed` (context_servers), `windsurf`. Run `kwin-mcp setup list` for the full table with paths.
+`./setup.sh` is still supported as a legacy alias (`./setup.sh hermes --uvx`).
+
+**Manual examples:**
+- **Claude Code**: `claude mcp add kwin-mcp -- kwin-mcp` (pip path) or `claude mcp add kwin-mcp -- uvx --from git+https://github.com/Samthesurf/kwin-mcp kwin-mcp` (uvx path)
 
 The server is self-sufficient about its environment: when an MCP client does
 not forward `DBUS_SESSION_BUS_ADDRESS` / `WAYLAND_DISPLAY` / `DISPLAY` /

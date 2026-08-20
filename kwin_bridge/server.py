@@ -547,6 +547,15 @@ def _run_server(args) -> None:
 
 
 def main() -> None:
+    # `kwin-mcp setup ...` is a subcommand, not a flag. Intercept it before
+    # argparse so `setup` does not collide with the server flags.
+    if len(sys.argv) > 1 and sys.argv[1] == "setup":
+        from .setup import main as setup_main
+        sys.exit(setup_main(sys.argv[2:]))
+    if sys.argv[0].endswith("kwin-mcp-setup"):
+        from .setup import main as setup_main
+        sys.exit(setup_main(sys.argv[1:]))
+
     parser = argparse.ArgumentParser(description="kwin-mcp server")
     parser.add_argument("--http", type=int, default=0,
                         help="Serve over Streamable HTTP on this port instead of stdio")
