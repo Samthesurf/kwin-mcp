@@ -37,6 +37,7 @@ Issues = "https://github.com/Samthesurf/kwin-mcp/issues"
 
 [project.scripts]
 kwin-mcp = "kwin_bridge.server:main"
+kwin-mcp-setup = "kwin_bridge.setup:main"
 kwin-mcp-doctor = "kwin_bridge.doctor:main"
 kwin-mcp-preflight = "kwin_bridge.preflight:main"
 
