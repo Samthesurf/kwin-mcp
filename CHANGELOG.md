@@ -2,6 +2,34 @@
 
 All notable changes to kwin-mcp.
 
+## [0.5.0] - 2026-08-19
+
+### Added
+- **One-command agent wiring via the installed binary** (no clone, no venv, no
+  uvx). After `pipx install kwin-mcp-server` a newcomer just runs
+  `kwin-mcp setup <agent>` and the Console Script wires the agent's MCP config
+  for them. New `kwin-mcp-setup` Console Script installed alongside `kwin-mcp`.
+  - `kwin-mcp setup hermes` (or `claude`, `codex`, `cursor`, `vscode`,
+    `opencode`, `openclaw`, `antigravity`, `pi`, `zed`, `windsurf`, ...):
+    preflights first, then injects the `kwin-mcp` command entry into the chosen
+    agent's config. `--uvx` is available for the curl-pipe use case where the
+    package is not installed and the agent should launch via `uvx`.
+  - `kwin-mcp setup list` shows supported agents;
+    `kwin-mcp setup check` runs the preflight only;
+    `kwin-mcp setup verify` preflights AND confirms the real server starts and
+    reports ready.
+  - `kwin_bridge/server.py` intercepts `setup` as a subcommand (and the
+    `kwin-mcp-setup` binary) so it never collides with the server's CLI flags.
+- Setup logic extracted into `kwin_bridge/setup.py` (404 lines) and shared across
+  the binary and `setup.sh`; `setup.sh` is now a thin curl shim that points at the
+  installed `kwin-mcp setup` workflow.
+
+### Changed
+- README rewritten into two install paths: **Path A** (pip install + `kwin-mcp
+  setup`) and **Path B** (curl/uvx with no pip install). Preflight-first: a
+  missing system dep prints the exact install command and stops, so config is
+  never half-wired.
+
 ## [0.4.0] - 2026-08-19
 
 ### Added
