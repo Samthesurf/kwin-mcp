@@ -21,8 +21,12 @@ Two backends are supported and chosen automatically:
 The module degrades gracefully when neither backend is available, so calls
 fall back to coordinate input instead of crashing.
 
-Note: AT-SPI element bounds are in screen coordinates, so they feed directly
-into the input module's absolute click coordinates.
+Note on coordinates: AT-SPI element bounds are in screen coordinates and are
+reported so a caller can reason about layout, but element activation
+(click_element) does NOT use them by default: it invokes the element's
+AT-SPI Action.DoAction directly, which is coordinate-free and works on
+unfocused Wayland windows. Synthesized pointer events are only a fallback
+for elements without actions (see click_element).
 """
 
 from __future__ import annotations
@@ -261,7 +265,25 @@ def get_window_state(window_id: str, max_elements: int = 100,
         "elements": [_el_to_dict(el) for (el, _n) in pairs],
         "count": len(pairs),
         "backend": _backend(),
+        **(_empty_tree_hint(win) if not pairs else {}),
     }
+
+
+def _empty_tree_hint(win) -> dict:
+    """Return a hint dict when a window's AT-SPI tree is empty.
+
+    An empty tree with a reachable bus almost always means the app has not
+    built its accessibility tree (standard Electron/Chromium behavior: it is
+    built lazily on the first AT-SPI client, and only when the app enables
+    a11y). Without the hint this looks like a kwin-mcp bug to every agent.
+    """
+    hint = ("tree is empty; the app may not have accessibility enabled "
+            "(Electron/Chromium: launch with --force-renderer-accessibility "
+            "or call app.setAccessibilitySupportEnabled(true) in the app)")
+    out = {"hint": hint}
+    if getattr(win, "app_name", ""):
+        out["app_name"] = win.app_name
+    return out
 
 
 def resolve_elements(window_id: str, *, role: str = "", name: str = "",
@@ -311,20 +333,93 @@ def _node_by_index(window_id: str, element_index: int,
 
 def click_element(window_id: str, element_index: int, max_elements: int = 100,
                   button: str = "left", double: bool = False) -> dict:
-    """Resolve an AT-SPI element index to its center and click it."""
-    el, _handle = _node_by_index(window_id, element_index, max_elements=max_elements)
+    """Activate an AT-SPI element by index.
+
+    Protocol-first: resolve the element's live AT-SPI handle and invoke its
+    Action.DoAction (the same signal a real pointer click would trigger), so
+    activation is coordinate-free, cursor-free, and works on unfocused
+    windows. Synthesized pointer events are only a fallback for elements that
+    expose no AT-SPI actions, and that path verifies window focus and reports
+    delivery honestly instead of claiming success for dropped input.
+    """
+    el, handle = _node_by_index(window_id, element_index, max_elements=max_elements)
     if el is None:
         return {"ok": False, "error": f"element {element_index} not found"}
+
+    # Primary path: protocol-level activation via the AT-SPI Action interface.
+    # No cursor, no focus dependency, no coordinate space.
+    if isinstance(handle, tuple) and _backend() == "dbus":
+        ok, detail = atspi_dbus.perform_action(handle)
+        if ok:
+            return {"ok": True, "element": el.index, "method": "atspi_doaction",
+                    "role": el.role, "name": el.name}
+        if detail != "element exposes no actions":
+            # The element HAS actions but DoAction failed: report honestly and
+            # do NOT silently fall back to pixels (that is how the old code
+            # mis-targeted elements).
+            return {"ok": False, "element": el.index, "method": "atspi_doaction",
+                    "error": detail}
+        # else: fall through to the coordinate fallback below.
+    else:
+        # pyatspi backend: same protocol-first contract.
+        if handle is None:
+            return {"ok": False, "element": el.index,
+                    "error": "element has no live AT-SPI handle"}
+        try:
+            atn = handle.queryAction()
+            n = int(atn.nActions)
+            if n > 0:
+                name = str(atn.getName(0))
+                ok = bool(atn.doAction(0))
+                if ok:
+                    return {"ok": True, "element": el.index, "method": "atspi_doaction",
+                            "action": name, "role": el.role, "name": el.name}
+                return {"ok": False, "element": el.index, "method": "atspi_doaction",
+                        "error": f"DoAction({name!r}) returned False"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "element": el.index, "error": str(exc)}
+
+    # Fallback path: the element exposes no AT-SPI actions, so we must click
+    # its center with synthesized pointer events. Keep the Wayland honesty
+    # contract: focus the window first, then verify the input path before
+    # claiming success (window focused AND cursor finished on the target).
     if el.width == 0 or el.height == 0:
-        return {"ok": False, "error": f"element {element_index} has no bounds"}
-    from .input import click_window
+        return {"ok": False, "element": el.index,
+                "error": "element has no bounds and exposes no AT-SPI actions"}
+    from .input import click_window, get_cursor_position
     from .windows import get_window
     win = get_window(window_id)
-    local_x = (el.x + el.width // 2) - win.x
-    local_y = (el.y + el.height // 2) - win.y
+    center_x = el.x + el.width // 2
+    center_y = el.y + el.height // 2
+    local_x = center_x - win.x
+    local_y = center_y - win.y
     click_window(window_id, local_x, local_y, button=button, double=double)
-    return {"ok": True, "element": el.index,
-            "center_screen": [el.x + el.width // 2, el.y + el.height // 2]}
+    result = {
+        "ok": True, "element": el.index, "method": "coordinate_fallback",
+        "center_screen": [center_x, center_y],
+    }
+    # Verify delivery where we cheaply can: the cursor must have finished on
+    # the target (it would not if the compositor ignored our virtual pointer),
+    # and the window must actually be focused (Wayland routes clicks to the
+    # focused window; an unfocused window silently drops them).
+    try:
+        cur = get_cursor_position()
+        if abs(cur["x"] - center_x) > 40 or abs(cur["y"] - center_y) > 40:
+            result["ok"] = False
+            result["error"] = ("input-not-delivered (virtual pointer did not "
+                               "reach the target; compositor may have ignored it)")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .windows import active_window
+        active = active_window()
+        if active is not None and active.window_id != window_id:
+            result["ok"] = False
+            result["error"] = ("input-not-delivered (window not focused at click "
+                               "time; another window holds focus)")
+    except Exception:  # noqa: BLE001
+        pass
+    return result
 
 
 def click_semantic(window_id: str, *, role: str = "", name: str = "",
@@ -406,10 +501,13 @@ def focus_element(window_id: str, element_index: int, max_elements: int = 500) -
         from .input import click_window
         from .windows import get_window
         win = get_window(window_id)
-        click_window(window_id, (el.x + el.width // 2) - win.x,
-                     (el.y + el.height // 2) - win.y)
-        return {"ok": True, "element": el.index, "role": el.role, "name": el.name,
-                "method": "click_fallback"}
+        res = click_window(window_id, (el.x + el.width // 2) - win.x,
+                           (el.y + el.height // 2) - win.y)
+        out = {"ok": bool(res.get("ok")), "element": el.index, "role": el.role,
+               "name": el.name, "method": "click_fallback"}
+        if not out["ok"]:
+            out["error"] = "; ".join(res.get("warnings", [])) or "click did not verify"
+        return out
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
 

@@ -147,11 +147,17 @@ def click(x: int = 0, y: int = 0, window_id: str = "", button: str = "left",
             return a11y.click_semantic(window_id, role=role, name=name, text=text,
                                        button=button, double=double)
         if window_id:
-            input_mod.click_window(window_id, x, y, button=button, double=double)
+            res = input_mod.click_window(window_id, x, y, button=button,
+                                         double=double)
         else:
+            # Bare screen-space click with no window context: focus/delivery
+            # verification is not possible, so the result is marked unverified
+            # rather than silently claimed as delivered.
             input_mod.click(x, y, button=button, double=double)
-        return {"ok": True, "x": x, "y": y, "window_id": window_id or None,
-                "button": button, "double": double}
+            res = {"ok": True, "x": x, "y": y, "delivered": None,
+                   "warnings": ["delivery unverifiable (no window_id given)"]}
+        return {**res, "button": button, "double": double,
+                "window_id": window_id or None}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
@@ -166,12 +172,15 @@ def drag(from_x: int = 0, from_y: int = 0, to_x: int = 0, to_y: int = 0,
     """
     try:
         if window_id:
-            input_mod.drag_window(window_id, from_x, from_y, to_x, to_y,
-                                  button=button, steps=steps)
+            res = input_mod.drag_window(window_id, from_x, from_y, to_x, to_y,
+                                        button=button, steps=steps)
         else:
+            # No window context: delivery cannot be verified; report honestly.
             input_mod.drag(from_x, from_y, to_x, to_y, button=button, steps=steps)
-        return {"ok": True, "from": [from_x, from_y], "to": [to_x, to_y],
-                "window_id": window_id or None}
+            res = {"ok": True, "from": [from_x, from_y], "to": [to_x, to_y],
+                   "delivered": None,
+                   "warnings": ["delivery unverifiable (no window_id given)"]}
+        return {**res, "button": button, "window_id": window_id or None}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
 
@@ -253,7 +262,13 @@ def get_window_state(window_id: str, max_elements: int = 100) -> dict:
 @history.record("click_element", route="accessibility")
 def click_element(window_id: str, element_index: int, button: str = "left",
                   double: bool = False) -> dict:
-    """Click an AT-SPI element (by index from get_window_state) in a window."""
+    """Click an AT-SPI element (by index from get_window_state) in a window.
+
+    Activates the element's own AT-SPI action (DoAction) directly: no cursor
+    movement, no focus requirement, works on unfocused Wayland windows. Only
+    elements that expose no actions fall back to a verified coordinate click
+    (the result reports which path was used via ``method``).
+    """
     try:
         return a11y.click_element(window_id, element_index, button=button,
                                   double=double)

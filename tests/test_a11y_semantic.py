@@ -153,6 +153,18 @@ def _stub_window(monkeypatch):
     clicks = []
     monkeypatch.setattr(inmod, "click_window",
                         lambda wid, x, y, button="left", double=False: clicks.append((x, y)))
+
+    # Delivery verification (added in 0.6.0) reads the cursor and the active
+    # window after clicking; stub both so mock clicks verify cleanly. The fake
+    # cursor tracks the last stubbed click so the "pointer arrived" check passes.
+    def _fake_cursor():
+        if clicks:
+            lx, ly = clicks[-1]
+            return {"x": stub.x + lx, "y": stub.y + ly, "screen": 0}
+        return {"x": stub.x, "y": stub.y, "screen": 0}
+
+    monkeypatch.setattr(inmod, "get_cursor_position", _fake_cursor)
+    monkeypatch.setattr(wmod, "active_window", lambda: stub)
     return a11y, stub, clicks
 
 
@@ -190,14 +202,31 @@ def test_semantic_lifecycle(monkeypatch):
     bad = a11y.set_value(stub.window_id, btns[0].index, "x")
     assert not bad["ok"]
 
-    # click_element maps to the element center; click_semantic uses text/role
+    # click_element prefers AT-SPI DoAction over pixels (no click emitted)
     cl = a11y.click_element(stub.window_id, btns[0].index)
-    assert cl["ok"] and cl["center_screen"] == [530, 414]
-    assert clicks == [(530, 414)]
+    assert cl["ok"] and cl["method"] == "atspi_doaction"
+    assert clicks == []  # protocol-level: no synthetic pointer events
     clicks.clear()
+    # click_semantic on an element with no actions (the fixture slider) falls
+    # back to coordinate synthesis and reports the fallback path.
     cs = a11y.click_semantic(stub.window_id, role="slider")
-    assert cs["ok"] and cs["element"] == 2
+    assert cs["ok"] and cs["method"] == "coordinate_fallback"
+    assert cs["element"] == 2
     assert clicks == [(600, 490)]
+    clicks.clear()
+    # An element with NO actions falls back to coordinate synthesis, and the
+    # result is labeled as the fallback path.
+    _install_fake_pyatspi()  # rebuild fresh tree
+    noact = _Node("push button", "NoAction", 1547, 500, 520, 80, 28,
+                  states=(STATE_ENABLED, STATE_SHOWING), actions=())
+    # graft the no-action button into the app the same way the fixture does
+    fake_desktop = sys.modules["pyatspi"].Registry.getDesktop(0)
+    fake_desktop._apps[0]._children.append(noact)
+    st2 = a11y.get_window_state(stub.window_id)
+    idx2 = {e["name"]: e for e in st2["elements"]}
+    fb = a11y.click_element(stub.window_id, idx2["NoAction"]["index"])
+    assert fb["ok"] and fb["method"] == "coordinate_fallback"
+    assert clicks == [(540, 534)]  # center of 500,520 80x28
 
 
 def test_missing_pyatspi_degrades_gracefully(monkeypatch):
@@ -209,6 +238,39 @@ def test_missing_pyatspi_degrades_gracefully(monkeypatch):
     assert st["available"] is False
     assert a11y.resolve_elements("{fake}", role="button") == []
     assert a11y.perform_action("{fake}", 0)["ok"] is False
+
+
+def test_dbus_nactions_property_fallback(monkeypatch):
+    """Chromium/Electron bridges expose NActions as a property, not a method.
+
+    The Qt-style Action.GetNActions method does not exist on Chromium's
+    bdaddy bridge (it replies with a plain error string). The D-Bus backend
+    must fall back to reading the NActions property, or every Electron
+    element looks action-less and click_element degrades to pixels.
+    """
+    import kwin_bridge.atspi_dbus as adb
+
+    def fake_call(path, iface, method, signature, body=(), dest=None):
+        if method == "GetNActions":
+            # Chromium bridge: plain error string instead of a D-Bus error
+            return ('Method "GetNActions" with signature "" on interface '
+                    '"org.a11y.atspi.Action" doesn\'t exist\n',)
+        if (iface, method) == ("org.freedesktop.DBus.Properties", "Get"):
+            assert body == (adb._ACTION, "NActions")
+            return (("i", 2),)
+        if method == "GetName":
+            return ("press",)
+        if method == "DoAction":
+            assert body == (0,)
+            return (True,)
+        raise AssertionError(f"unexpected call {iface}.{method}")
+
+    monkeypatch.setattr(adb, "_call", fake_call)
+    handle = (":1.x", "/org/a11y/atspi/accessible/29")
+    assert adb._n_actions(*handle) == 2
+    assert adb.action_names(handle) == ["press", "press"]
+    ok, detail = adb.perform_action(handle)
+    assert ok and detail == ""
 
 
 def test_dbus_backend_live():

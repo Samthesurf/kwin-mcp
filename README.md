@@ -132,6 +132,40 @@ invoking a mutating tool:
 Annotations are safety hints, not an authorization system. Treat any call that
 could submit, delete, send, or purchase as requiring user approval.
 
+## Troubleshooting
+
+### Electron / Chromium apps show an empty AT-SPI tree
+
+Electron and Chromium build their accessibility tree lazily and only when the
+app opts in. Until then `get_window_state` returns
+`{"available": true, "elements": [], "count": 0}` (the result carries a `hint`
+when this happens). It is an app-side setting, not a kwin-mcp bug. Fix it one
+of two ways:
+
+- Launch the app with `--force-renderer-accessibility`, or
+- call `app.setAccessibilitySupportEnabled(true)` inside the app's main process.
+
+### Clicks into an unfocused window do not land (Wayland)
+
+Wayland routes synthetic input to the focused surface; a click into an
+unfocused window is silently dropped. kwin-mcp's window-targeted tools
+(`click` with `window_id`, `click_element`, `drag`) focus the window first and
+then verify delivery (focus state + pointer position). When verification
+fails the result reports `ok: false` with a
+`input-not-delivered (window not focused?)` warning instead of a false
+success. If you see that warning, activate the window first (`activate`) and
+retry, or prefer element targeting (`click_element` / `perform_action`),
+which uses AT-SPI `Action.DoAction` and needs neither focus nor a cursor.
+
+### Element clicks hit the wrong control
+
+`click_element` activates an element's AT-SPI action directly (protocol-level,
+coordinate-free). If an element exposes no AT-SPI actions, the tool falls back
+to clicking its on-screen center with synthetic pointer events; that fallback
+is reported as `method: "coordinate_fallback"` in the result. If you need
+guaranteed correct targeting on an app whose coordinates look wrong, use
+`perform_action` (AT-SPI only, never falls back to pixels).
+
 ## Computer History
 
 A port of Cua Driver's encrypted, metadata-only **Computer History** preview

@@ -6,11 +6,18 @@ input cannot be injected "into a specific window" the way cua-driver does on
 X11. Instead we inject via a kernel virtual input device backed by
 /dev/uinput, which the compositor treats as a real mouse + keyboard. The
 compositor routes that input to whatever window is focused and under the
-cursor. The bridge therefore follows a FOCUS-THEN-INJECT pattern:
+cursor. The bridge therefore follows a FOCUS-THEN-INJECT-THEN-VERIFY pattern:
 
     1. focus the target window (kdotool windowactivate)
     2. move the virtual pointer to the target coordinate (in screen space)
     3. emit the click / key / drag
+    4. verify delivery where cheaply possible (window actually focused,
+       pointer actually finished on target) and report honestly when not
+
+Step 4 exists because a silent drop is the worst outcome: observed on this
+machine, a click into an unfocused Wayland window returns from uinput with
+no error while the target app never receives any event. Reporting
+``delivered=False`` with a warning beats a false ``ok``.
 
 Because the pointer is global, this relocates the real cursor. That is an
 inherent property of the Wayland input model, not a bug. It matches how
@@ -90,6 +97,16 @@ _MOVE_MAX_ITERS = 60
 # Delay before the first keystroke in type_text. Lets the compositor finish
 # routing input to a just-focused widget so leading characters are not dropped.
 _TYPE_START_DELAY = 0.15  # seconds
+
+# Grace period after activate() before we ask KWin which window is focused.
+# kdotool windowactivate returns before KWin has finished the focus switch,
+# so an immediate check reads the PREVIOUS focused window and would produce
+# a false "window not focused" verdict. 0.35s matches the screenshot module.
+_FOCUS_SETTLE = 0.35
+
+# Pixels the real cursor may miss the intended point by after the closed-loop
+# move and still count as "the pointer arrived" for delivery verification.
+_DELIVERY_TOLERANCE_PX = 40
 
 # Mapping from human key names to uinput keys.
 _KEY_NAME_MAP = {
@@ -272,12 +289,53 @@ def _mouse_location() -> str:
 subprocess_getmouselocation = _mouse_location
 
 
+def _wait_cursor_settled(timeout: float = 0.5) -> dict:
+    """Poll until the reported cursor position stops changing, then return it.
+
+    KWin applies virtual-pointer motion asynchronously: a position read can
+    come back while earlier REL events are still in flight, so the cursor
+    keeps gliding after move_cursor's loop believes it converged. Pressing a
+    button on a gliding pointer clicks whatever surface is under the cursor
+    when the events land, not the intended point. Waiting for two identical
+    consecutive reads makes the position trustworthy before a press.
+    """
+    deadline = time.monotonic() + timeout
+    prev = get_cursor_position()
+    while time.monotonic() < deadline:
+        time.sleep(0.012)
+        cur = get_cursor_position()
+        if cur["x"] == prev["x"] and cur["y"] == prev["y"]:
+            return cur
+        prev = cur
+    return prev
+
+
 def click(x: int, y: int, button: str = "left", double: bool = False) -> None:
-    """Click at absolute screen coordinates (x, y)."""
+    """Click at absolute screen coordinates (x, y).
+
+    Guarantees the pointer has physically stopped on the target before the
+    button press: KWin routes the synthetic press to whatever surface is under
+    the CURRENT cursor position, so pressing mid-glide clicks the wrong place
+    (observed: press landed 320px from target). After the closed-loop move we
+    wait for the cursor to settle, allow one corrective pass (stale reads can
+    make the loop over- or under-shoot), and if the pointer still is not on
+    target we refuse to press and raise instead - a click in the wrong place
+    is worse than no click.
+    """
     if button not in _BUTTON_MAP:
         raise ValueError(f"unknown button: {button!r}")
     move_cursor(x, y)
-    time.sleep(0.03)
+    cur = _wait_cursor_settled()
+    if abs(cur["x"] - x) > _MOVE_TOLERANCE or abs(cur["y"] - y) > _MOVE_TOLERANCE:
+        # One corrective pass: the first loop can end short/overshot because
+        # position reads lag behind the applied motion.
+        move_cursor(x, y)
+        cur = _wait_cursor_settled()
+    if abs(cur["x"] - x) > _MOVE_TOLERANCE or abs(cur["y"] - y) > _MOVE_TOLERANCE:
+        raise RuntimeError(
+            f"virtual pointer stalled: click at ({x}, {y}) not delivered "
+            f"(cursor stopped at ({cur['x']}, {cur['y']}) instead)")
+    time.sleep(0.02)
     dev = _pointer()
     btn = _BUTTON_MAP[button]
     dev.emit(btn, 1); dev.syn(); time.sleep(0.03)
@@ -288,15 +346,59 @@ def click(x: int, y: int, button: str = "left", double: bool = False) -> None:
         dev.emit(btn, 0); dev.syn()
 
 
+def _window_focused(window_id: str) -> bool:
+    """True if KWin currently reports this window as the focused one.
+
+    Best-effort: when the active window cannot be determined (some kdotool
+    builds return non-zero with no output) we return True so verification
+    degrades to the cursor-position check instead of false-failing.
+    """
+    from .windows import active_window
+    try:
+        active = active_window()
+    except Exception:  # noqa: BLE001
+        return True
+    if active is None:
+        return True
+    return active.window_id == window_id
+
+
 def click_window(window_id: str, x: int, y: int, button: str = "left",
-                 double: bool = False) -> None:
-    """Focus a window, then click at window-local (x, y)."""
+                 double: bool = False) -> dict:
+    """Focus a window, then click at window-local (x, y) - with delivery checks.
+
+    Returns a dict reporting what actually happened: whether the focus switch
+    to the target window was observed, and whether the virtual pointer finished
+    on the target point. On Wayland a click into an unfocused window is
+    silently dropped by the compositor, so this function refuses to report
+    success for input it could not verify; the caller sees
+    ``delivered=False`` plus a ``warnings`` list instead of a bare ok.
+    """
     if not is_uuid(window_id):
         raise ValueError(f"not a valid KDE window UUID: {window_id!r}")
     win = get_window(window_id)
     activate(window_id)
-    time.sleep(0.25)
+    time.sleep(_FOCUS_SETTLE)
+    focused = _window_focused(window_id)
     click(win.x + x, win.y + y, button=button, double=double)
+    result = {"ok": True, "window_id": window_id, "x": x, "y": y,
+              "focused": focused, "delivered": True, "warnings": []}
+    if not focused:
+        # Wayland routes clicks to the focused surface: without focus the
+        # events almost certainly died. Say so instead of claiming success.
+        result["delivered"] = False
+        result["warnings"].append(
+            "input-not-delivered (window not focused at click time; another "
+            "window holds focus on Wayland)")
+    cur = get_cursor_position()
+    if abs(cur["x"] - (win.x + x)) > _DELIVERY_TOLERANCE_PX or \
+            abs(cur["y"] - (win.y + y)) > _DELIVERY_TOLERANCE_PX:
+        result["delivered"] = False
+        result["warnings"].append(
+            "input-not-delivered (virtual pointer did not reach the target; "
+            "the compositor may have ignored it)")
+    result["ok"] = result["delivered"]
+    return result
 
 
 def drag(from_x: int, from_y: int, to_x: int, to_y: int, button: str = "left",
@@ -337,15 +439,38 @@ def drag(from_x: int, from_y: int, to_x: int, to_y: int, button: str = "left",
 
 
 def drag_window(window_id: str, from_x: int, from_y: int, to_x: int, to_y: int,
-                button: str = "left", steps: int = 20) -> None:
-    """Focus a window, then drag using window-local coordinates."""
+                button: str = "left", steps: int = 20) -> dict:
+    """Focus a window, then drag using window-local coordinates.
+
+    Same delivery-verification contract as click_window: focus is confirmed
+    before the drag and the pointer's end position is checked afterwards; an
+    unverified drag is reported with ``delivered=False`` and warnings, not ok.
+    """
     if not is_uuid(window_id):
         raise ValueError(f"not a valid KDE window UUID: {window_id!r}")
     win = get_window(window_id)
     activate(window_id)
-    time.sleep(0.25)
+    time.sleep(_FOCUS_SETTLE)
+    focused = _window_focused(window_id)
     drag(win.x + from_x, win.y + from_y, win.x + to_x, win.y + to_y,
          button=button, steps=steps)
+    result = {"ok": True, "window_id": window_id,
+              "from": [from_x, from_y], "to": [to_x, to_y],
+              "focused": focused, "delivered": True, "warnings": []}
+    if not focused:
+        result["delivered"] = False
+        result["warnings"].append(
+            "input-not-delivered (window not focused at drag time; another "
+            "window holds focus on Wayland)")
+    cur = get_cursor_position()
+    if abs(cur["x"] - (win.x + to_x)) > _DELIVERY_TOLERANCE_PX or \
+            abs(cur["y"] - (win.y + to_y)) > _DELIVERY_TOLERANCE_PX:
+        result["delivered"] = False
+        result["warnings"].append(
+            "input-not-delivered (virtual pointer did not reach the drag "
+            "target; the compositor may have ignored it)")
+    result["ok"] = result["delivered"]
+    return result
 
 
 def type_text(text: str) -> dict:

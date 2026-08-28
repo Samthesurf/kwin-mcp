@@ -2,6 +2,52 @@
 
 All notable changes to kwin-mcp.
 
+## [0.6.0] - 2026-08-28
+
+### Fixed
+- **`click_element` no longer mis-targets elements on Electron/CSD windows.**
+  On this machine's Electron app, AT-SPI extents are client-space, not
+  screen-space (window at x=89; AX (325,561) == CDP viewport rect (325.3,561)),
+  so the old index -> center -> synthetic-pixel click landed on the wrong
+  control (clicking "Test" triggered "Enroll"). Element activation now invokes
+  the element's own AT-SPI `Action.DoAction` directly: protocol-level,
+  coordinate-free, cursor-free, and it works on unfocused windows. Pixel
+  synthesis is a labeled fallback (`method: "coordinate_fallback"`) used only
+  for elements that expose no actions; `perform_action` failures are reported
+  instead of silently falling back.
+- **D-Bus backend now reads `NActions` from the properties interface when the
+  Chromium bridge hides the method.** Chromium/Electron's bdaddy bridge does
+  not implement `Action.GetNActions` (it replies with a plain error string);
+  `NActions` is exposed as a D-Bus property. Before this fix every Electron
+  element reported `actions: []` and clicks degraded to coordinate synthesis.
+  With it, Electron buttons expose `press`/`showContextMenu` and DoAction
+  works end to end (verified live: Test button press -> `VerifyStart` in the
+  open-fprintd journal, cancel -> `VerifyStop`/`Release`).
+- **Coordinate clicks can no longer report success for dropped input (the
+  "silent drop" class).** `click_window` / `drag_window` now confirm the focus
+  switch after `activate` (with a settle delay; `windowactivate` returns
+  before KWin finishes the switch) and verify the pointer actually arrived;
+  unverified input returns `ok: false` with an `input-not-delivered`
+  warning instead of a bare `ok: true`. The `click` / `drag` MCP tools
+  propagate `delivered` / `warnings`; screen-space clicks without a
+  `window_id` are reported as `delivered: null` (unverifiable).
+- **Clicks no longer fire while the virtual pointer is still moving.** KWin
+  applies uinput motion asynchronously, so the old code could emit the button
+  press while the cursor was mid-glide, clicking whatever surface was under
+  the cursor at that instant (observed: press landed 320px from target).
+  `click` now waits for the cursor position to settle, allows one corrective
+  pass, and refuses to press (raising with the actual position) if the pointer
+  never reaches the target.
+
+### Changed
+- `get_window_state` returns a `hint` when a window's AT-SPI tree is
+  available but empty, pointing at the Electron/Chromium cause
+  (`app.setAccessibilitySupportEnabled(true)` or
+  `--force-renderer-accessibility`), so an empty tree is no longer mistaken
+  for a kwin-mcp bug. README gained a Troubleshooting section covering the
+  empty-tree hint, the Wayland unfocused-click drop, and element-click
+  targeting.
+
 ## [0.5.0] - 2026-08-19
 
 ### Added

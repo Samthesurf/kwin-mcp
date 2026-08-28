@@ -195,6 +195,30 @@ def _interfaces(bus, path) -> list:
         return []
 
 
+def _n_actions(bus: str, path: str) -> int:
+    """Action count for a node, tolerating Chromium's property-only bridge.
+
+    Qt/GTK bridges answer the ``Action.GetNActions`` method. The Chromium/
+    Electron bridge does not implement that method at all (it replies with a
+    plain error string instead of a D-Bus error); it exposes ``NActions`` as
+    a property on ``org.a11y.atspi.Action`` instead. Try the method first,
+    then the property, so Electron apps get real action counts and DoAction
+    targeting instead of silently degrading to coordinate clicks.
+    """
+    try:
+        n = _norm_int(_call(path, _ACTION, "GetNActions", "", (), dest=bus)[0])
+        if n > 0:
+            return int(n)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        body = _call(path, "org.freedesktop.DBus.Properties", "Get", "ss",
+                     (_ACTION, "NActions"), dest=bus)
+        return _norm_int(body[0])
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def _node_info(bus, path, role, name):
     """Return (states, actions, editable, bounds) for a node."""
     states: list = []
@@ -213,7 +237,7 @@ def _node_info(bus, path, role, name):
         pass
     if _ACTION in ifaces:
         try:
-            n = _norm_int(_call(path, _ACTION, "GetNActions", "", (), dest=bus)[0])
+            n = _n_actions(bus, path)
             actions = [
                 _call(path, _ACTION, "GetName", "i", (i,), dest=bus)[0] or ""
                 for i in range(int(n))
@@ -386,23 +410,42 @@ def elements_for_window(pid: int, max_elements: int = 500,
     return out
 
 
+def action_names(handle) -> list:
+    """Return the AT-SPI action names for a node, aligned by action index.
+
+    The returned list position IS the DoAction index, so empty names are kept
+    (a failed GetName for action 1 must not shift action 2's index). An empty
+    list means the element exposes no actions (or the query failed), which
+    callers use to decide between protocol activation and coordinate
+    synthesis.
+    """
+    bus, path = handle
+    try:
+        n = _n_actions(bus, path)
+    except Exception:  # noqa: BLE001
+        return []
+    names: list = []
+    for i in range(int(n)):
+        try:
+            names.append(_norm_str(_call(path, _ACTION, "GetName", "i", (i,),
+                                         dest=bus)[0]))
+        except Exception:  # noqa: BLE001
+            names.append("")
+    return names
+
+
 def perform_action(handle, action: str = "") -> tuple:
     bus, path = handle
     try:
-        n = _norm_int(_call(path, _ACTION, "GetNActions", "", (), dest=bus)[0])
-        if int(n) == 0:
+        names = action_names(handle)
+        if not names:
             return False, "element exposes no actions"
         idx = 0
         if action:
-            idx = -1
-            for i in range(int(n)):
-                nm = _call(path, _ACTION, "GetName", "i", (i,), dest=bus)[0] or ""
-                if _norm_str(nm).strip().lower() == action.lower():
-                    idx = i
-                    break
+            low = action.lower()
+            idx = next((i for i, nm in enumerate(names)
+                        if nm.strip().lower() == low), -1)
             if idx == -1:
-                names = [_call(path, _ACTION, "GetName", "i", (i,), dest=bus)[0]
-                         for i in range(int(n))]
                 return False, f"no action {action!r}; available: {names}"
         ok = bool(_call(path, _ACTION, "DoAction", "i", (idx,), dest=bus)[0])
         return ok, ""
