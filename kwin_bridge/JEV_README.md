@@ -50,13 +50,12 @@ kwin-mcp already produces for every window on KDE Wayland.
 
 ## Calibration (measured 2026-09-18, KDE Plasma on this machine)
 
-- Decision latency over OpenRouter, warm keep-alive connection: 400-480 ms
-  median after the connector rewrite (was 880-3,100 ms with fresh urllib
-  connections; TLS setup was ~370 ms and OpenRouter relay overhead the rest).
-- OpenRouter relay multiplies the model's native decision time several-fold.
-  Direct TypeSafe (`api.typesafe.ai/v1/systemone`, earliest measured 70-500
-  ms, mostly ~100-400 ms) or the Vercel AI Gateway route (`typesafe-ai/jev`)
-  would cut further; both need a key (waitlist via console.typesafe.ai).
+- Direct typesafe.ai endpoint (TYPESAFE_API_KEY): warm decisions 393-499 ms
+  median on this network; cold first call ~1.3 s (TLS + model warm-up).
+  Resolved model: jev-1.13.0. The OpenRouter relay (fallback) measured
+  880-3,100 ms for the same question before this module switched direct.
+- Both endpoints take the same request shape; the backend auto-selects on
+  key presence and `KWIN_MCP_JEV_MODEL` overrides the model id either way.
 - Completion `noul` on "done" picks lands 0.72-0.99; the auto-complete
   threshold is therefore 0.7 with the Choice already at `done`.
 - Confidence on hard states can drop to 0.61 (still correct action).

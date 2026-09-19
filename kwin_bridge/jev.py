@@ -1,8 +1,10 @@
 """Jev integration: fast System One decisions over the AT-SPI tree.
 
-TypeSafe's Jev (served through OpenRouter's Decisions API) answers typed
-questions with calibrated probabilities instead of generating text, in a few
-hundred milliseconds. kwin-mcp already produces exactly the state Jev eats: a
+TypeSafe's Jev (System One model) answers typed questions with calibrated
+probabilities instead of generating text, in a few hundred milliseconds.
+Request goes directly to api.typesafe.ai (when TYPESAFE_API_KEY is set,
+fastest path) or through OpenRouter's relay (OPENROUTER_API_KEY fallback).
+kwin-mcp already produces exactly the state Jev eats: a
 structured AT-SPI element tree with roles, names, states and actions.
 
 ``jev_act`` runs the two-tier agent loop locally:
@@ -23,8 +25,8 @@ replaces a multi-second LLM round-trip per UI step with a sub-second
 (probabilistic) answer, and everything free-form (the goal, the text values)
 stays on the caller.
 
-Requires OPENROUTER_API_KEY in the environment. No extra Python dependency:
-the Decisions API is plain HTTP and we use urllib.
+Requires a Jev API key. No extra Python dependency:
+the System One API is plain HTTP and we use urllib.
 """
 
 from __future__ import annotations
@@ -37,8 +39,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
-_DEFAULT_MODEL = "~typesafe/jev-latest"
+_DECISIONS_URL = "https://api.typesafe.ai/v1/systemone"
+_FALLBACK_URL = "https://openrouter.ai/api/alpha/decisions"
+_DEFAULT_MODEL = "jev-latest"
+_OPENROUTER_MODEL = "~typesafe/jev-latest"
 
 # Hard safety caps.
 _MAX_OPTIONS = 200      # Jev allows 255; leave headroom for sentinels
@@ -55,13 +59,29 @@ def greet() -> str:  # pragma: no cover - trivial smoke export
 
 
 def _api_key() -> str:
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    if not key:
-        raise JevUnavailable(
-            "OPENROUTER_API_KEY is not set; export it (OpenRouter -> Keys) to "
-            "use the jev_* tools"
-        )
-    return key
+    key = os.environ.get("TYPESAFE_API_KEY", "")
+    if key:
+        return key
+    or_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if or_key:
+        return or_key  # OpenRouter fallback path, decided in decide()
+    raise JevUnavailable(
+        "no Jev API key: set TYPESAFE_API_KEY (console.typesafe.ai -> Keys) "
+        "or OPENROUTER_API_KEY to use the jev_* tools"
+    )
+
+
+def _backend() -> tuple[str, str]:
+    """Resolve (url, model) from which key is present.
+
+    TYPESAFE_API_KEY -> the official endpoint (fastest, direct).
+    OPENROUTER_API_KEY -> the OpenRouter relay (fallback).
+    """
+    if os.environ.get("TYPESAFE_API_KEY"):
+        return _DECISIONS_URL, os.environ.get(
+            "KWIN_MCP_JEV_MODEL", _DEFAULT_MODEL)
+    return _FALLBACK_URL, os.environ.get("KWIN_MCP_JEV_MODEL",
+                                         _OPENROUTER_MODEL)
 
 
 class _KeepAliveHTTPS:
@@ -75,25 +95,31 @@ class _KeepAliveHTTPS:
 
     def __init__(self) -> None:
         self._conn: http.client.HTTPSConnection | None = None
-        self._host = urllib.parse.urlparse(_DECISIONS_URL).hostname or "openrouter.ai"
+        self._host = "api.typesafe.ai"
         self._path = urllib.parse.urlparse(_DECISIONS_URL).path
 
     def _get(self):
-        if self._conn is None:
-            self._conn = http.client.HTTPSConnection(self._host, timeout=30)
+        url, _model = _backend()
+        host = urllib.parse.urlparse(url).hostname or "api.typesafe.ai"
+        if self._conn is None or self._host != host:
+            self.close()
+            self._host = host
+            self._conn = http.client.HTTPSConnection(host, timeout=30)
         return self._conn
 
     def post_json(self, payload: bytes, auth: str,
                   timeout: int = 30) -> tuple[int, dict]:
         """POST once; returns (status, parsed_json). Reconnects on a dead
         socket and retries once; second failure re-raises as OSError."""
+        url, _model = _backend()
+        path = urllib.parse.urlparse(url).path
         body = payload
         for attempt in (1, 2):
             conn = self._get()
             conn.timeout = timeout
             try:
                 conn.request(
-                    "POST", self._path, body=body,
+                    "POST", path, body=body,
                     headers={
                         "Authorization": auth,
                         "Content-Type": "application/json",
@@ -137,7 +163,7 @@ def decide(state, questions: dict, model: str = "", timeout: int = 30) -> dict:
     Uses a persistent keep-alive connection so warm calls skip TLS setup.
     """
     payload = {
-        "model": model or os.environ.get("KWIN_MCP_JEV_MODEL", _DEFAULT_MODEL),
+        "model": model or _backend()[1],
         "state": state,
         "questions": questions,
     }

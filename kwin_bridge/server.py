@@ -337,7 +337,7 @@ def jev_act(window_id: str, goal: str, values: Optional[dict] = None,
     values: optional {name_or_key: text} for text fields the goal needs
     (e.g. {"search": "hello world"}). Low confidence, 'stuck' picks or
     executor failures stop and return honest status for the host to handle.
-    Requires OPENROUTER_API_KEY.
+    Requires TYPESAFE_API_KEY (or OPENROUTER_API_KEY as fallback).
     """
     try:
         return jev.act(window_id, goal, values=values,
@@ -358,7 +358,7 @@ def jev_decide(state, questions: dict, model: str = "") -> dict:
     questions: {"dept": {"type": "choice", "criteria": {"a": "...", "b":
     "..."}}, "urgent": {"type": "noul", "instructions": "..."}}. Use this for
     routing, verification and classification fast-paths that would otherwise
-    cost a full LLM call. Requires OPENROUTER_API_KEY.
+    cost a full LLM call. Requires TYPESAFE_API_KEY (or OPENROUTER_API_KEY as fallback).
     """
     try:
         res = jev.decide(state, questions, model=model or "")
@@ -376,7 +376,7 @@ def jev_check(window_id: str, question: str) -> dict:
     Reads the AT-SPI tree and answers as a probability (noul) - e.g. "Does
     the window show a success message?", "Is the search field now filled
     with 'hello'?". Use for fast completion checks instead of an LLM call.
-    Requires OPENROUTER_API_KEY.
+    Requires TYPESAFE_API_KEY (or OPENROUTER_API_KEY as fallback).
     """
     try:
         return jev.check(window_id, question)
@@ -481,8 +481,9 @@ def health() -> dict:
         "in_input_group": "input" in _groups(),
         "pyatspi_available": a11y._atspi_available(),
         "display_server": _display_server(),
-        "jev": ("available" if os.environ.get("OPENROUTER_API_KEY")
-                else "OPENROUTER_API_KEY not set (jev_* tools disabled)"),
+        "jev": ("direct typesafe.ai" if os.environ.get("TYPESAFE_API_KEY")
+                else ("openrouter relay" if os.environ.get("OPENROUTER_API_KEY")
+                      else "no Jev key (jev_* tools disabled)")),
     }
     return status
 
