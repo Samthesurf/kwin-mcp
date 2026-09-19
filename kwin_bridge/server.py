@@ -32,6 +32,7 @@ logging.getLogger("mcp").setLevel(logging.WARNING)
 
 from . import windows, screenshot, input as input_mod, a11y, _env, doctor  # noqa: F401
 from . import history  # noqa: F401  # encrypted, metadata-only Computer History
+from . import jev  # noqa: F401  # Jev (System One) fast-decision integration
 
 
 def _ann(*, read_only: bool = False, destructive: bool = False,
@@ -323,6 +324,68 @@ def focus_element(window_id: str, element_index: int) -> dict:
         return {"error": str(exc)}
 
 
+@mcp.tool(title="Jev act (fast autonomous loop)", annotations=_ann(**ACT))
+@history.record("jev_act", route="accessibility")
+def jev_act(window_id: str, goal: str, values: Optional[dict] = None,
+            max_steps: int = 8, min_confidence: float = 0.5) -> dict:
+    """Drive a window toward a goal using Jev (System One) step decisions.
+
+    Runs observe -> Jev decides -> execute -> re-observe on the window's
+    AT-SPI tree. Jev (via OpenRouter) picks which element to click or type
+    into at sub-second latency instead of a multi-second LLM reasoning call
+    per step; completion and stuck states are judged in the same call.
+    values: optional {name_or_key: text} for text fields the goal needs
+    (e.g. {"search": "hello world"}). Low confidence, 'stuck' picks or
+    executor failures stop and return honest status for the host to handle.
+    Requires OPENROUTER_API_KEY.
+    """
+    try:
+        return jev.act(window_id, goal, values=values,
+                       max_steps=max_steps, min_confidence=min_confidence)
+    except jev.JevUnavailable as exc:
+        return {"ok": False, "error": str(exc), "status": "jev_unavailable"}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "trace": traceback.format_exc()}
+
+
+@mcp.tool(title="Jev decide (raw fast question)", annotations=_ann(**RO))
+def jev_decide(state, questions: dict, model: str = "") -> dict:
+    """Evaluate typed questions about a state in ONE Jev call (~300-900 ms).
+
+    Jev does not generate text: it answers typed questions with calibrated
+    probabilities. question types: 'noul' (yes/no probability), 'choice'
+    (pick one of up to 255 criteria), 'score' (2-10 level scale). Example
+    questions: {"dept": {"type": "choice", "criteria": {"a": "...", "b":
+    "..."}}, "urgent": {"type": "noul", "instructions": "..."}}. Use this for
+    routing, verification and classification fast-paths that would otherwise
+    cost a full LLM call. Requires OPENROUTER_API_KEY.
+    """
+    try:
+        res = jev.decide(state, questions, model=model or "")
+        return {"ok": True, **res}
+    except jev.JevUnavailable as exc:
+        return {"ok": False, "error": str(exc), "status": "jev_unavailable"}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "trace": traceback.format_exc()}
+
+
+@mcp.tool(title="Jev check (fast yes/no on window)", annotations=_ann(**RO))
+def jev_check(window_id: str, question: str) -> dict:
+    """Ask Jev one yes/no question about a window's current state (<1 s).
+
+    Reads the AT-SPI tree and answers as a probability (noul) - e.g. "Does
+    the window show a success message?", "Is the search field now filled
+    with 'hello'?". Use for fast completion checks instead of an LLM call.
+    Requires OPENROUTER_API_KEY.
+    """
+    try:
+        return jev.check(window_id, question)
+    except jev.JevUnavailable as exc:
+        return {"ok": False, "error": str(exc), "status": "jev_unavailable"}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "trace": traceback.format_exc()}
+
+
 @mcp.tool(title="Focused element", annotations=_ann(**RO))
 def focused_element(window_id: str) -> dict:
     """Report which AT-SPI element currently has keyboard focus.
@@ -418,6 +481,8 @@ def health() -> dict:
         "in_input_group": "input" in _groups(),
         "pyatspi_available": a11y._atspi_available(),
         "display_server": _display_server(),
+        "jev": ("available" if os.environ.get("OPENROUTER_API_KEY")
+                else "OPENROUTER_API_KEY not set (jev_* tools disabled)"),
     }
     return status
 
